@@ -1,0 +1,48 @@
+---
+# Better Prompt Plugin Settings
+# Copy this file to ~/.claude/better-prompt.local.md and customise as needed
+
+# Global on/off switch for the entire plugin
+enabled: true
+
+# Grammar and spelling correction stage
+correction: true
+correction_model: haiku
+
+# Prompt enhancement stage
+enhancement: true
+enhancement_model: sonnet
+
+# Audit logging of original prompts
+audit: true
+audit_log_path: ~/.claude/better-prompt-audit.json
+
+# Show intermediate steps (for debugging)
+debug_mode: false
+---
+
+# Better Prompt Configuration
+
+This file contains settings for the better-prompt plugin. Edit the YAML frontmatter above to customise behaviour.
+
+## Quick Reference
+
+- `enabled`: Global on/off switch
+- `correction`: Fix grammar and spelling errors
+- `enhancement`: Improve clarity and specificity
+- `audit`: Log original prompts with mistake analysis
+- `debug_mode`: Show intermediate steps
+
+## Model Options
+
+- `haiku`: Fast, efficient (recommended for correction)
+- `sonnet`: Balanced capability and speed (recommended for enhancement)
+- `opus`: Highest quality (slower, more expensive)
+
+## Notes
+
+- Changes take effect immediately
+- Punctuation corrections are applied but NOT classified as mistakes
+- The audit log grows indefinitely — consider archiving if needed
+- Use `/better-prompt:config` for interactive configuration
+- Use `/better-prompt:toggle` for quick on/off of specific stages
