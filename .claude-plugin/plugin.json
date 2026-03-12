@@ -1,0 +1,10 @@
+{
+  "name": "better-prompt",
+  "version": "0.1.0",
+  "description": "Automatically corrects and enhances user prompts before submission to Claude",
+  "author": {
+    "name": "Yura"
+  },
+  "homepage": "https://github.com/yura/better-prompt",
+  "keywords": ["prompt", "correction", "enhancement", "grammar", "quality"]
+}

@@ -1,0 +1,16 @@
+# Local settings
+.claude/*.local.md
+
+# Audit logs
+*.audit.json
+.better-prompt-audit.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
