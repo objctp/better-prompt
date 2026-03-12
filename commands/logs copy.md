@@ -19,22 +19,14 @@ This path can be customised in the settings file (`audit_log_path`).
 
 ## Reading the Log
 
-The audit log uses **JSON Lines (NDJSON)** format — each line is a separate JSON object.
-
 Read the audit log file and display recent entries:
 
 ```bash
-# Read the last N entries (most recent last)
-tail -n 10 ~/.claude/better-prompt-audit.json
+# Read the log file
+cat ~/.claude/better-prompt-audit.json
 
-# Read the last N entries (most recent first)
-tac ~/.claude/better-prompt-audit.json | head -n 10
-
-# Or use jq for formatted output (each line)
-jq '.' ~/.claude/better-prompt-audit.json
-
-# Get last N entries formatted
-tail -n 10 ~/.claude/better-prompt-audit.json | jq '.'
+# Or use jq for formatted output
+jq . ~/.claude/better-prompt-audit.json
 ```
 
 ## Display Format
