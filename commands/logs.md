@@ -24,17 +24,14 @@ The audit log uses **JSON Lines (NDJSON)** format — each line is a separate JS
 Read the audit log file and display recent entries:
 
 ```bash
-# Read the last N entries (most recent last)
-tail -n 10 ~/.claude/better-prompt-audit.json
+# Read the last entry
+tail -n 1 ~/.claude/better-prompt-audit.json
 
-# Read the last N entries (most recent first)
-tac ~/.claude/better-prompt-audit.json | head -n 10
+# Read the last entry formatted
+tail -n 1 ~/.claude/better-prompt-audit.json | jq '.'
 
-# Or use jq for formatted output (each line)
-jq '.' ~/.claude/better-prompt-audit.json
-
-# Get last N entries formatted
-tail -n 10 ~/.claude/better-prompt-audit.json | jq '.'
+# Read last N entries
+tail -n 5 ~/.claude/better-prompt-audit.json | jq '.'
 ```
 
 ## Display Format
@@ -54,9 +51,9 @@ Display each log entry in a readable format:
 
 ## Arguments
 
-If the user provides a count (e.g., `/better-prompt:logs 10`), display only that many recent entries.
+If the user provides a count (e.g., `/better-prompt:logs 5`), display that many recent entries.
 
-Default: Show the last 10 entries if count is not specified.
+Default: Show the last entry if count is not specified.
 
 ## Handling Empty/Missing Logs
 
