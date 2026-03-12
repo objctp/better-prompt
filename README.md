@@ -16,7 +16,7 @@ Automatically corrects and enhances user prompts before submission to Claude.
 1. Clone or copy this plugin to your local machine
 2. Add to Claude Code:
    ```bash
-   cc --plugin-dir /path/to/better-prompt
+   claude --plugin-dir /path/to/better-prompt
    ```
 3. Or copy to `.claude-plugin/` in your project directory for project-specific use
 
@@ -44,16 +44,16 @@ debug_mode: false
 
 ### Settings
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `enabled` | boolean | `true` | Global on/off switch for the plugin |
-| `correction` | boolean | `true` | Enable grammar and spelling correction |
-| `correction_model` | string | `haiku` | Model to use for correction |
-| `enhancement` | boolean | `true` | Enable prompt enhancement |
-| `enhancement_model` | string | `sonnet` | Model to use for enhancement |
-| `audit` | boolean | `true` | Enable audit logging |
-| `audit_log_path` | string | `~/.claude/better-prompt-audit.json` | Path to audit log file |
-| `debug_mode` | boolean | `false` | Show intermediate steps (correction, enhancement) |
+| Setting             | Type    | Default                              | Description                                       |
+| ------------------- | ------- | ------------------------------------ | ------------------------------------------------- |
+| `enabled`           | boolean | `true`                               | Global on/off switch for the plugin               |
+| `correction`        | boolean | `true`                               | Enable grammar and spelling correction            |
+| `correction_model`  | string  | `haiku`                              | Model to use for correction                       |
+| `enhancement`       | boolean | `true`                               | Enable prompt enhancement                         |
+| `enhancement_model` | string  | `sonnet`                             | Model to use for enhancement                      |
+| `audit`             | boolean | `true`                               | Enable audit logging                              |
+| `audit_log_path`    | string  | `~/.claude/better-prompt-audit.json` | Path to audit log file                            |
+| `debug_mode`        | boolean | `false`                              | Show intermediate steps (correction, enhancement) |
 
 ## Usage
 
@@ -74,12 +74,21 @@ Once enabled, the plugin automatically intercepts and processes your prompts:
 ### Debug Mode
 
 Enable `debug_mode` in settings to see intermediate steps:
+
 - Original prompt
 - Corrected prompt (grammar/spelling fixes)
 - Enhanced prompt (clarity/specificity improvements)
 
 ## Audit Log Format
 
+The audit log uses **JSON Lines (NDJSON)** format — each entry is a separate JSON object on its own line:
+
+```json
+{"date":"2026-03-12T10:30:00Z","prompt":"original prompt text","mistake-nature":["grammar","spelling"],"mistakes":[{"type":"grammar","original":"incorrect phrase","correction":"corrected phrase"}],"models":{"correction":"haiku","enhancement":"sonnet"}}
+{"date":"2026-03-12T10:31:00Z","prompt":"another prompt text","mistake-nature":["spelling"],"mistakes":[{"type":"spelling","original":"misspeling","correction":"misspelling"}],"models":{"correction":"haiku","enhancement":"sonnet"}}
+```
+
+**Formatted for readability:**
 ```json
 {
   "date": "2026-03-12T10:30:00Z",
