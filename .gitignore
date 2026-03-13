@@ -1,6 +1,9 @@
 # Local settings
 .claude/*.local.md
 
+# Folders
+docs/
+
 # Audit logs
 *.audit.json
 .better-prompt-audit.json
