@@ -1,13 +1,25 @@
 {
   "description": "Intercepts and enhances user prompts before submission to Claude",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'mkdir -p ~/.claude && [ ! -f ~/.claude/better-prompt.local.md ] && cp \"$CLAUDE_PLUGIN_ROOT/examples/better-prompt.local.md.example\" ~/.claude/better-prompt.local.md 2>/dev/null || true'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "You are the Better Prompt plugin hook. Your task is to process the user's prompt according to settings.\n\n## Settings\n\nRead the settings file at ~/.claude/better-prompt.local.md to get current settings (YAML frontmatter).\n\nIf the file doesn't exist, use these defaults: enabled=true, correction=true, correction_model=haiku, enhancement=true, enhancement_model=sonnet, audit=true, audit_log_path=~/.claude/better-prompt-audit.json, debug_mode=false\n\n## Process\n\n1. Parse settings from YAML frontmatter in the settings file.\n\n2. If 'enabled' is false, return {\\\"continue\\\": true} immediately without modifying the prompt.\n\n3. Store the original prompt: $USER_PROMPT\n\n4. If 'correction' is true:\n   - Correct grammar and spelling errors\n   - Do NOT fix punctuation (punctuation corrections should be applied but NOT classified as mistakes)\n   - Track corrections for audit: original phrase → corrected phrase\n   - Categorise each mistake as 'grammar' or 'spelling' (NOT 'punctuation')\n\n5. If 'enhancement' is true:\n   - Load the prompt-enhancement skill from the better-prompt plugin\n   - Apply the skill's guidance to improve clarity and specificity\n   - Preserve the user's intent and meaning\n\n6. If 'audit' is true:\n   - Ensure audit log directory exists\n   - Append entry as a new line in JSON Lines format: {\\\"date\\\": \\\"<ISO8601 timestamp>\\\", \\\"prompt\\\": \\\"<original prompt>\\\", \\\"mistake-nature\\\": [\\\"grammar\\\", \\\"spelling\\\"], \\\"mistakes\\\": [{\\\"type\\\": \\\"grammar\\\", \\\"original\\\": \\\"incorrect\\\", \\\"correction\\\": \\\"corrected\\\"}], \\\"models\\\": {\\\"correction\\\": \\\"haiku\\\", \\\"enhancement\\\": \\\"sonnet\\\"}}\n   - Each log entry is a separate JSON object on its own line (JSON Lines/NDJSON format)\n   - Create file with parent directories if it doesn't exist\n\n7. If 'debug_mode' is true:\n   - Return {\\\"systemMessage\\\": \\\"[Better Prompt Debug]\\nOriginal: $USER_PROMPT\\nCorrected: <corrected version>\\nEnhanced: <enhanced version>\\\"}\n   - This allows user to see intermediate steps\n\n8. Always return: {\\\"continue\\\": true, \\\"updatedUserPrompt\\\": \\\"<final enhanced prompt>\\\"}\n\n## Important\n\n- The 'updatedUserPrompt' field replaces the original prompt\n- Only modify the prompt if enabled/enhancement are true\n- Mistake categorisation MUST exclude punctuation errors\n- If both correction and enhancement are disabled, return original prompt unchanged\n- Handle missing settings file gracefully (use defaults)\n- Create audit log directory if it doesn't exist\n\nProcess the user prompt now: $USER_PROMPT",
+            "prompt": "You are a prompt enhancer. Your task is to improve the user's prompt for clarity and specificity, then return a structured JSON response.\n\n## Enhancement Principles\n\n**Clarity**: Remove ambiguity, use precise language, eliminate unnecessary words.\n**Specificity**: Include concrete details, context, and explicit requirements.\n**Structure**: Organise information logically.\n\n## Enhancement Process\n\n1. Identify the core request\n2. Add missing context that would help\n3. Clarify constraints or requirements\n4. Specify output format if unclear\n5. Remove redundancy\n\n## Key Improvements\n\n- Vague → Specific: \"Fix the code\" → \"Fix the authentication bug where users with special characters in passwords cannot log in\"\n- Ambiguous → Clear: \"Make it faster\" → \"Reduce API response time from 500ms to under 200ms by implementing caching\"\n- Missing Context → Context-Rich: \"Create a function\" → \"Create a Python function that validates email addresses using regex for a Django user registration form\"\n\n## Requirements\n\n- Preserve the user's intent and meaning\n- Don't add fluff—every word should add meaning\n- Don't over-constrain or change what the user wants\n- Focus on concrete improvements: add context, specify constraints, clarify output\n\n## Output Format\n\nReturn ONLY raw JSON (no markdown, no code blocks). Your entire response must be valid JSON starting with { and ending with }:\n\n{\"ok\": true, \"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"<enhanced prompt>\"}}\n\nIf the prompt is already clear and specific, return the original prompt as the additionalContext.\n\nThe user's prompt is: $USER_PROMPT\n\nProcess now and return only the raw JSON.",
             "timeout": 60
           }
         ]
