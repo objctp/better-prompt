@@ -7,7 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'mkdir -p ~/.claude && [ ! -f ~/.claude/better-prompt.local.md ] && cp \"$CLAUDE_PLUGIN_ROOT/examples/better-prompt.local.md.example\" ~/.claude/better-prompt.local.md 2>/dev/null || true'",
+            "command": "bash -c 'mkdir -p ~/.claude && [ ! -f ~/.claude/better-prompt.local.md ] && cp \"${CLAUDE_PLUGIN_ROOT}/examples/better-prompt.local.md.example\" ~/.claude/better-prompt.local.md 2>/dev/null || true; touch \"$CLAUDE_PROJECT_DIR\"/.prompts.json'",
+            "statusMessage": "Placing config file and .prompts.json on project root",
             "timeout": 5
           }
         ]
@@ -18,9 +19,23 @@
         "matcher": "*",
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "You are a prompt enhancer. Your task is to improve the user's prompt for clarity and specificity, then return a structured JSON response.\n\n## Enhancement Principles\n\n**Clarity**: Remove ambiguity, use precise language, eliminate unnecessary words.\n**Specificity**: Include concrete details, context, and explicit requirements.\n**Structure**: Organise information logically.\n\n## Enhancement Process\n\n1. Identify the core request\n2. Add missing context that would help\n3. Clarify constraints or requirements\n4. Specify output format if unclear\n5. Remove redundancy\n\n## Key Improvements\n\n- Vague → Specific: \"Fix the code\" → \"Fix the authentication bug where users with special characters in passwords cannot log in\"\n- Ambiguous → Clear: \"Make it faster\" → \"Reduce API response time from 500ms to under 200ms by implementing caching\"\n- Missing Context → Context-Rich: \"Create a function\" → \"Create a Python function that validates email addresses using regex for a Django user registration form\"\n\n## Requirements\n\n- Preserve the user's intent and meaning\n- Don't add fluff—every word should add meaning\n- Don't over-constrain or change what the user wants\n- Focus on concrete improvements: add context, specify constraints, clarify output\n\n## Output Format\n\nReturn ONLY raw JSON (no markdown, no code blocks). Your entire response must be valid JSON starting with { and ending with }:\n\n{\"ok\": true, \"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"<enhanced prompt>\"}}\n\nIf the prompt is already clear and specific, return the original prompt as the additionalContext.\n\nThe user's prompt is: $USER_PROMPT\n\nProcess now and return only the raw JSON.",
-            "timeout": 60
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/enhance.sh",
+            "statusMessage": "Correcting and Enhancing Prompt...",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "clear|logout|prompt_input_exit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'rm -f \"$CLAUDE_PROJECT_DIR\"/.prompts.json'",
+            "statusMessage": "Cleaning up...",
+            "timeout": 30
           }
         ]
       }

@@ -1,5 +1,7 @@
 # Local settings
 .claude/*.local.md
+cspell.json
+.prompts.json
 
 # Folders
 docs/
@@ -17,3 +19,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Backups
+*.bckp.*
