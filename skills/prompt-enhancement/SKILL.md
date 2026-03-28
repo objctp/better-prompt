@@ -16,6 +16,8 @@ This skill provides guidance for refining and reconstructing prompts to achieve 
 
 **Structure**: Organise information logically with clear sections or bullet points.
 
+**@mentions**: Treat any token beginning with `@` (e.g. `@src/auth.ts`, `@README.md`) as an opaque file/folder reference. Reproduce it verbatim — do not rephrase, expand, or reposition it.
+
 ## Enhancement Process
 
 To enhance a prompt, follow these steps:
@@ -55,14 +57,17 @@ Enhanced prompts typically follow this structure:
 ## Common Enhancements
 
 ### Adding Context
+
 - "For a React application..." → "For a React 18 application using TypeScript and Tailwind CSS..."
 - "Write a function..." → "Write a function that processes user input from a web form..."
 
 ### Specifying Constraints
+
 - "Create a layout..." → "Create a responsive layout that works on mobile (320px+) and desktop (1024px+)"
 - "Optimize this code..." → "Optimize for O(n) time complexity and O(1) space complexity"
 
 ### Clarifying Output
+
 - "Generate a report..." → "Generate a markdown report with sections for Overview, Analysis, and Recommendations"
 - "Create documentation..." → "Create documentation including installation steps, usage examples, and API reference"
 
@@ -79,19 +84,25 @@ Enhanced prompts typically follow this structure:
 **Original:** "write tests"
 **Enhanced:** "Write unit tests for the user authentication module using Jest. Cover login, logout, password reset, and account creation scenarios. Include edge cases for invalid input."
 
+**Original:** "refactor @src/auth.ts so it handles null inputs gracefully"
+**Enhanced:** "Refactor @src/auth.ts to handle null and undefined inputs gracefully: add null guards at function entry points, return safe defaults rather than throwing, and add inline comments explaining each guard."
+
+Note: `@src/auth.ts` is reproduced verbatim; only the request is expanded.
+
 ## Anti-Patterns to Avoid
 
 - **Overly verbose**: Don't add fluff—every word should add meaning
 - **Over-constraining**: Too many restrictions may limit creative solutions
 - **Missing the goal**: Ensure the enhanced prompt still addresses the original intent
 - **Changing meaning**: Enhancement should clarify, not alter what the user wants
+- **Altering @mentions**: Never rephrase or expand `@mention` tokens; reproduce them exactly as written
 
 ## Quick Reference
 
-| Issue | Enhancement |
-|-------|-------------|
-| Ambiguous pronouns | Replace with specific nouns |
-| Missing context | Add relevant background information |
-| Unclear constraints | Specify limitations explicitly |
-| Vague output | Define expected format explicitly |
-| Redundant phrases | Remove unnecessary repetition |
+| Issue               | Enhancement                         |
+| ------------------- | ----------------------------------- |
+| Ambiguous pronouns  | Replace with specific nouns         |
+| Missing context     | Add relevant background information |
+| Unclear constraints | Specify limitations explicitly      |
+| Vague output        | Define expected format explicitly   |
+| Redundant phrases   | Remove unnecessary repetition       |

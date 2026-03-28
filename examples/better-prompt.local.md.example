@@ -15,7 +15,6 @@ enhancement_model: sonnet
 
 # Audit logging of original prompts
 audit: true
-audit_log_path: ~/.claude/better-prompt-audit.json
 
 # Show intermediate steps (for debugging)
 debug_mode: false
