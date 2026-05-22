@@ -127,7 +127,7 @@ The plugin registers a `UserPromptSubmit` hook (type: `command`) that runs `hook
 2. **Kill switch** — if `enabled: false`, pass through immediately
 3. **Correction** — invoke the `prompt-correction` agent via `claude -p --agent`; parse returned JSON for corrected text and mistake list
 4. **Translation** — invoke the `prompt-translation` agent (if enabled); non-English prompts are translated to English
-5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent`; refines prompt for clarity
+5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent --resume`; uses a persistent session so the model sees previously enhanced prompts as context, improving understanding of the user's work progression
 6. **Audit** — append one NDJSON line to `audit_log_path`
 7. **Copy to clipboard** — use `pbcopy` (macOS) or `xclip`/`xsel` (Linux) to copy the enhanced prompt
 8. **Continue** — return `{"continue": true}` to let the original prompt through
@@ -210,7 +210,7 @@ One JSON object per line (NDJSON):
 }
 ```
 
-- `mistake-nature` contains only `"grammar"` or `"spelling"` — punctuation changes are applied silently and never classified as mistakes
+- `mistake-nature` contains the mistake types as classified by the correction agent (e.g. `grammar`, `spelling`, `punctuation`, `word-choice`, `capitalisation`)
 - `models.correction`, `models.translation`, or `models.enhancement` is `null` when that stage is disabled
 
 ## License
