@@ -3,6 +3,7 @@
 .claude/*.local.md
 cspell.json
 .prompts.json
+.better-prompt-enhance-session
 
 # Folders
 docs/

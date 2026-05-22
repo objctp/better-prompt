@@ -273,24 +273,69 @@ fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 5. Enhancement stage
+# Uses --resume to maintain a persistent session so the model sees
+# previously enhanced prompts as context — without needing the user's
+# original conversation history.
 # ═════════════════════════════════════════════════════════════════════════════
 ENHANCED_PROMPT="$WORKING_PROMPT"
+ENHANCE_SESSION_FILE="${CLAUDE_PROJECT_DIR:-.}/.better-prompt-enhance-session"
 
 if [ "$ENHANCEMENT" = "true" ]; then
     debug "Running enhancement with model: $ENHANCEMENT_MODEL"
 
-    ENHANCED_RESULT=$(claude -p \
-        --agent better-prompt:prompt-enhancement \
-        --model "$ENHANCEMENT_MODEL" \
-        "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
+    _run_enhance() {
+        local resume_args=()
+        if [ -f "$ENHANCE_SESSION_FILE" ]; then
+            local stored_id
+            stored_id=$(cat "$ENHANCE_SESSION_FILE" 2>/dev/null || true)
+            if [ -n "$stored_id" ]; then
+                resume_args=(--resume "$stored_id")
+                debug "Resuming enhancement session: $stored_id"
+            fi
+        fi
+
+        claude -p \
+            "${resume_args[@]}" \
+            --output-format json \
+            --agent better-prompt:prompt-enhancement \
+            --model "$ENHANCEMENT_MODEL" \
+            "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
+
+Prompt:
+$WORKING_PROMPT" 2>&1
+    }
+
+    ENHANCE_JSON=$(_run_enhance) || {
+        # Resume failed — session may have expired. Retry without --resume.
+        if [ -f "$ENHANCE_SESSION_FILE" ]; then
+            debug "Resume failed, retrying without session"
+            rm -f "$ENHANCE_SESSION_FILE"
+            ENHANCE_JSON=$(claude -p \
+                --output-format json \
+                --agent better-prompt:prompt-enhancement \
+                --model "$ENHANCEMENT_MODEL" \
+                "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
 
 Prompt:
 $WORKING_PROMPT" 2>&1) || {
-        warn "Enhancement stage failed: $ENHANCED_RESULT"
-        ENHANCED_RESULT=""
+                warn "Enhancement stage failed: $ENHANCE_JSON"
+                ENHANCE_JSON=""
+            }
+        else
+            warn "Enhancement stage failed: $ENHANCE_JSON"
+            ENHANCE_JSON=""
+        fi
     }
-    ENHANCED_PROMPT="$ENHANCED_RESULT"
 
+    if [ -n "$ENHANCE_JSON" ] && command -v jq &>/dev/null; then
+        ENHANCED_RESULT=$(printf '%s' "$ENHANCE_JSON" | jq -r '.result // empty' 2>/dev/null || true)
+        ENHANCE_SID=$(printf '%s' "$ENHANCE_JSON" | jq -r '.session_id // empty' 2>/dev/null || true)
+        [ -n "$ENHANCE_SID" ] && printf '%s' "$ENHANCE_SID" > "$ENHANCE_SESSION_FILE"
+    else
+        ENHANCED_RESULT="$ENHANCE_JSON"
+    fi
+
+    ENHANCED_PROMPT="$ENHANCED_RESULT"
     [ -z "$ENHANCED_PROMPT" ] && ENHANCED_PROMPT="$WORKING_PROMPT"
 fi
 

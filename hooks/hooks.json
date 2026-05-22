@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'rm -f \"$CLAUDE_PROJECT_DIR\"/.prompts.json'",
+            "command": "bash -c 'rm -f \"$CLAUDE_PROJECT_DIR\"/.prompts.json \"$CLAUDE_PROJECT_DIR\"/.better-prompt-enhance-session'",
             "statusMessage": "Cleaning up...",
             "timeout": 30
           }
