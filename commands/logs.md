@@ -13,9 +13,7 @@ Display recent audit log entries from the better-prompt plugin.
 
 ## Audit Log Location
 
-The default audit log location is `~/.claude/better-prompt-audit.json`
-
-This path can be customised in the settings file (`audit_log_path`).
+The audit log is located at `<project-root>/.claude/prompts.json`
 
 ## Reading the Log
 
@@ -25,13 +23,13 @@ Read the audit log file and display recent entries:
 
 ```bash
 # Read the last entry
-tail -n 1 ~/.claude/better-prompt-audit.json
+tail -n 1 .claude/prompts.json
 
 # Read the last entry formatted
-tail -n 1 ~/.claude/better-prompt-audit.json | jq '.'
+tail -n 1 .claude/prompts.json | jq '.'
 
 # Read last N entries
-tail -n 5 ~/.claude/better-prompt-audit.json | jq '.'
+tail -n 5 .claude/prompts.json | jq '.'
 ```
 
 ## Display Format

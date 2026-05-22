@@ -35,10 +35,9 @@ Explain each setting and its purpose:
 | `correction_model` | string | `haiku` | Model to use for correction (haiku, sonnet, opus) |
 | `translation` | boolean | `false` | Enable translation of non-English prompts to English |
 | `translation_model` | string | `haiku` | Model to use for translation (haiku, sonnet, opus) |
-| `enhancement` | boolean | `true` | Enable prompt enhancement stage |
+| `enhancement` | boolean | `false` | Enable prompt enhancement stage |
 | `enhancement_model` | string | `sonnet` | Model to use for enhancement (haiku, sonnet, opus) |
 | `audit` | boolean | `true` | Enable audit logging of original prompts |
-| `audit_log_path` | string | `~/.claude/better-prompt-audit.json` | Path to audit log file |
 | `debug_mode` | boolean | `false` | Show intermediate steps (correction, enhancement) |
 
 ## Interactive Configuration
@@ -47,7 +46,7 @@ If the user provides arguments (e.g., `/better-prompt:config debug_mode true`), 
 
 If no arguments provided, ask the user which setting they want to configure:
 
-1. "Which setting would you like to configure? (enabled, correction, correction_model, translation, translation_model, enhancement, enhancement_model, audit, audit_log_path, debug_mode)"
+1. "Which setting would you like to configure? (enabled, correction, correction_model, translation, translation_model, enhancement, enhancement_model, audit, debug_mode)"
 2. "What value would you like to set it to?"
 
 ## Updating Settings
@@ -61,10 +60,9 @@ correction: true
 correction_model: haiku
 translation: false
 translation_model: haiku
-enhancement: true
+enhancement: false
 enhancement_model: sonnet
 audit: true
-audit_log_path: ~/.claude/better-prompt-audit.json
 debug_mode: false
 ---
 ```

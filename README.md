@@ -7,7 +7,7 @@ Automatically corrects and enhances user prompts before they reach Claude.
 - **Grammar and spelling correction** — fixes errors whilst preserving punctuation
 - **Translation** — translates non-English prompts to English before enhancement
 - **Prompt enhancement** — refines prompts for clarity and specificity using a configurable agent
-- **Transparent operation** — the original prompt is blocked and replaced; Claude sees only the improved version
+- **Transparent operation** — the original prompt is blocked and replaced via session rewind; Claude sees only the improved version
 - **Audit logging** — records original prompts with mistake categorisation in NDJSON format
 - **Configurable stages** — enable/disable correction, translation, enhancement, and logging independently
 - **Model selection** — use different models for different stages (default: haiku for correction and translation, sonnet for enhancement)
@@ -16,9 +16,12 @@ Automatically corrects and enhances user prompts before they reach Claude.
 
 - Claude Code
 - [`jq`](https://jqlang.github.io/jq/) — required for JSON parsing and audit logging
-- Clipboard utility (for TTY rewind method):
+- Clipboard utility (for copying enhanced prompt):
   - **macOS**: `pbcopy` is built-in
   - **Linux**: install `xclip` or `xsel`
+- Keyboard simulation (for rewind mechanism):
+  - **macOS**: `osascript` is built-in
+  - **Linux**: install [`ydotool`](https://github.com/ReimuNotMoe/ydotool) (works on both X11 and Wayland)
 
 Install dependencies:
 
@@ -26,20 +29,44 @@ Install dependencies:
 # macOS
 brew install jq
 
-# Debian/Ubuntu
-sudo apt install jq xclip
+# Ubuntu/Debian
+sudo apt install jq xclip ydotool
 
 # Fedora
-sudo dnf install jq xclip
+sudo dnf install jq xclip ydotool
+
+# Arch Linux
+sudo pacman -S jq xclip ydotool
 ```
 
 ## Installation
 
-1. Clone or copy this plugin to your local machine
-2. Add to Claude Code:
-   ```bash
-   claude --plugin-dir /path/to/better-prompt
-   ```
+**Claude Code:**
+
+```bash
+/plugin marketplace add objctp/better-prompt
+/plugin install better-prompt@objct-plugins
+
+# Local development
+git clone https://github.com/objctp/shell-routines && cd shell-routines && claude
+```
+
+**OpenCode:**
+
+Add to your config — OpenCode auto-installs npm plugins via Bun at startup.
+
+```jsonc
+// Project scope: opencode.json
+{ "plugin": ["@objctp/opencode-better-prompt"] }
+
+// Global scope: ~/.config/opencode/opencode.json
+{ "plugin": ["@objctp/opencode-better-prompt"] }
+```
+
+```bash
+# Local development
+git clone https://github.com/objctp/better-prompt && cd better-prompt && opencode
+```
 
 On first run, the plugin copies `examples/better-prompt.local.md.example` to `~/.claude/better-prompt.local.md` if no config file exists.
 
@@ -54,29 +81,26 @@ correction: true
 correction_model: haiku
 translation: false
 translation_model: haiku
-enhancement: true
+enhancement: false
 enhancement_model: sonnet
 audit: true
-audit_log_path: ~/.claude/better-prompt-audit.jsonl
 debug_mode: false
-resume_delay: 1.0
 ---
 ```
 
 ### Settings
 
-| Setting             | Type    | Default                               | Description                                          |
-| ------------------- | ------- | ------------------------------------- | ---------------------------------------------------- |
-| `enabled`           | boolean | `true`                                | Global on/off switch                                 |
-| `correction`        | boolean | `true`                                | Enable grammar and spelling correction               |
-| `correction_model`  | string  | `haiku`                               | Model used for correction                            |
-| `translation`       | boolean | `false`                               | Enable translation of non-English prompts            |
-| `translation_model` | string  | `haiku`                               | Model used for translation                           |
-| `enhancement`       | boolean | `true`                                | Enable prompt enhancement                            |
-| `enhancement_model` | string  | `sonnet`                              | Model used for enhancement                           |
-| `audit`             | boolean | `true`                                | Enable audit logging                                 |
-| `audit_log_path`    | string  | `~/.claude/better-prompt-audit.jsonl` | Path to audit log (NDJSON)                           |
-| `debug_mode`        | boolean | `false`                               | Show intermediate steps instead of replacing prompt  |
+| Setting             | Type    | Default  | Description                                         |
+| ------------------- | ------- | -------- | --------------------------------------------------- |
+| `enabled`           | boolean | `true`   | Global on/off switch                                |
+| `correction`        | boolean | `true`   | Enable grammar and spelling correction              |
+| `correction_model`  | string  | `haiku`  | Model used for correction                           |
+| `translation`       | boolean | `false`  | Enable translation of non-English prompts           |
+| `translation_model` | string  | `haiku`  | Model used for translation                          |
+| `enhancement`       | boolean | `false`  | Enable prompt enhancement                           |
+| `enhancement_model` | string  | `sonnet` | Model used for enhancement                          |
+| `audit`             | boolean | `true`   | Enable audit logging                                |
+| `debug_mode`        | boolean | `false`  | Show intermediate steps instead of replacing prompt |
 
 ## Usage
 
@@ -88,12 +112,9 @@ Once enabled, the plugin intercepts every prompt automatically:
 4. Plugin enhances for clarity and specificity (if enabled)
 5. Original prompt is logged to the audit file (if enabled)
 6. Enhanced prompt is copied to clipboard
-7. Original prompt is submitted to Claude
-8. After Claude responds, the **Stop** hook triggers a rewind
-9. Session rewinds to before your prompt
-10. Enhanced prompt is pasted and submitted
-
-Claude receives only the enhanced prompt. Your original prompt is briefly processed but then replaced via rewind.
+7. Original prompt is **blocked** — it never reaches Claude
+8. After the block, the **Stop hook** fires a rewind — `osascript` on macOS, `ydotool` on Linux — to paste the enhanced prompt and submit
+9. Claude receives only the enhanced prompt
 
 ### Commands
 
@@ -103,7 +124,7 @@ Claude receives only the enhanced prompt. Your original prompt is briefly proces
 
 ### Debug mode
 
-When `debug_mode` is `true`, the plugin skips the session rewind and instead appends all three versions to Claude's context so you can inspect them:
+When `debug_mode` is `true`, the plugin blocks the original prompt and surfaces all three pipeline stages via the block reason so you can inspect them:
 
 ```
 [Better Prompt Debug]
@@ -112,8 +133,6 @@ Corrected:  <after grammar/spelling fix>
 Translated: <after translation, if enabled>
 Enhanced:   <after enhancement>
 ```
-
-The original prompt is sent to Claude as normal in debug mode — nothing is blocked or replaced.
 
 ## How it works
 
@@ -127,73 +146,56 @@ The plugin registers a `UserPromptSubmit` hook (type: `command`) that runs `hook
 2. **Kill switch** — if `enabled: false`, pass through immediately
 3. **Correction** — invoke the `prompt-correction` agent via `claude -p --agent`; parse returned JSON for corrected text and mistake list
 4. **Translation** — invoke the `prompt-translation` agent (if enabled); non-English prompts are translated to English
-5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent --resume`; uses a persistent session so the model sees previously enhanced prompts as context, improving understanding of the user's work progression
-6. **Audit** — append one NDJSON line to `audit_log_path`
-7. **Copy to clipboard** — use `pbcopy` (macOS) or `xclip`/`xsel` (Linux) to copy the enhanced prompt
-8. **Continue** — return `{"continue": true}` to let the original prompt through
+5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent --resume`; uses a persistent session so the model sees previously enhanced prompts as context
+6. **Audit** — append one NDJSON line to `.claude/prompts.json` in the project root
+7. **Determine final prompt** — use the last enabled stage's output
+8. **Write sentinel** — store content hash to prevent re-processing the enhanced prompt on rewind
+9. **Block** — return `{"decision": "block", ...}` so the original prompt never reaches Claude
+10. **Copy to clipboard** — use `pbcopy` (macOS) or `xclip`/`xsel` (Linux)
+11. **Spawn stop hook** — detached background process for the rewind
 
 **Stop hook (after Claude responds):**
 
-9. **Locate session PID** — find the session JSON file in `~/.claude/sessions/` matching `$CLAUDE_SESSION_ID` and extract the process ID
-10. **Resolve TTY** — get the terminal device for the session PID
-11. **Send rewind sequence** — write keyboard codes to TTY: `Esc+Esc` → `Arrow Up` → `Enter` → `Enter` → `Cmd+V`
+12. **Locate session PID** — find the session JSON file in `~/.claude/sessions/` matching the session ID
+13. **Paste and submit** — send paste followed by Return: `osascript` on macOS, `ydotool` on Linux
 
-### Fallback behaviour
+### Sentinel guard
 
-If the session PID cannot be found (e.g. on the first turn), the plugin falls back to injecting the enhanced prompt via `additionalContext` rather than aborting. The original prompt still reaches Claude in this case, but is accompanied by the enhanced version as additional context.
+A content-hash sentinel prevents the pipeline from re-processing its own enhanced prompt when the rewind causes a second `UserPromptSubmit` event. The sentinel stores the md5 hash of the final prompt and expires after 60 seconds.
 
 ## Troubleshooting
-
-### TTY Permission Errors
-
-If you see "cannot write to /dev/ttysXXX", ensure:
-
-- The terminal is owned by your user
-- You're not running Claude Code with sudo
-- On Linux: you have proper permissions for the TTY device
 
 ### Clipboard Not Working
 
 - macOS: `pbcopy` is built-in, no action needed
 - Linux: install `xclip` or `xsel` via your package manager
 
-### Rewind Sequence Not Triggering
+### Rewind Not Triggering (Linux)
+
+- Ensure `ydotool` is installed and the `uinput` kernel module is loaded: `lsmod | grep uinput`
+- On some distros you may need to add your user to the `input` group: `sudo usermod -aG input $USER`
+- Check `/tmp/better-prompt-stop.log` for stop-hook output
+
+### Rewind Not Triggering (macOS)
 
 - Verify the session PID is correct:
   ```bash
-  # Find your session ID in debug output or env
-  # Then find the matching session file
   grep "\"sessionId\":\"<your-session-id>\"" ~/.claude/sessions/*.json
   ```
 - Ensure the process is still running: `ps -p <pid>`
-- Check debug_mode output to see the detected PID and TTY device
+- Check `/tmp/better-prompt-stop.log` for stop-hook output
+- Enable `debug_mode` to see pipeline details
 
 ## Audit log format
 
-One JSON object per line (NDJSON):
+The audit log is written to `<project-root>/.claude/prompts.json` in NDJSON format (one JSON object per line):
 
 ```json
 {
   "date": "2026-03-12T10:30:00Z",
   "prompt": "original prompt text",
-  "mistake-nature": ["grammar", "spelling"],
-  "mistakes": [
-    {
-      "type": "grammar",
-      "original": "incorrect phrase",
-      "correction": "corrected phrase"
-    }
-  ],
-  "models": { "correction": "haiku", "translation": null, "enhancement": "sonnet" }
-}
-```
-
-**Formatted:**
-
-```json
-{
-  "date": "2026-03-12T10:30:00Z",
-  "prompt": "original prompt text",
+  "corrected": "prompt after correction stage",
+  "enhanced": "final enhanced prompt text",
   "mistake-nature": ["grammar", "spelling"],
   "mistakes": [
     {
@@ -210,7 +212,9 @@ One JSON object per line (NDJSON):
 }
 ```
 
-- `mistake-nature` contains the mistake types as classified by the correction agent (e.g. `grammar`, `spelling`, `punctuation`, `word-choice`, `capitalisation`)
+- `mistake-nature` contains unique mistake types as classified by the correction agent (e.g. `grammar`, `spelling`, `word-choice`, `capitalisation`)
+- `corrected` is the prompt after the correction stage (before enhancement)
+- `enhanced` is the final prompt after all stages
 - `models.correction`, `models.translation`, or `models.enhancement` is `null` when that stage is disabled
 
 ## License

@@ -49,6 +49,12 @@ fi
 debug "Stop hook fired for session: $SESSION_ID"
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Detect OS
+# ═════════════════════════════════════════════════════════════════════════════
+_IS_MACOS=false
+[[ "$(uname -s)" == "Darwin" ]] && _IS_MACOS=true
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Locate session PID
 # ═════════════════════════════════════════════════════════════════════════════
 ACTIVE_SESSIONS_DIR="$HOME/.claude/sessions"
@@ -99,39 +105,34 @@ if [[ -z "$ENHANCED_PROMPT" ]]; then
     exit 0
 fi
 
-# ═════════════════════════════════════════════════════════════════════════════
-# Send rewind keyboard sequence via TTY (Linux support - reserved for future use)
-# ═════════════════════════════════════════════════════════════════════════════
-# # Resolve TTY
-# TTY_RAW=$(ps -p "$SESSION_PID" -o tty= | tr -d ' ')
-#
-# if [[ -z "$TTY_RAW" ]] || [[ "$TTY_RAW" == "?" ]]; then
-#     debug "Could not determine TTY for PID $SESSION_PID"
-#     printf '{"continue": true}\n'
-#     exit 0
-# fi
-#
-# TTY_DEV="/dev/$TTY_RAW"
-#
-# if [[ ! -w "$TTY_DEV" ]]; then
-#     debug "Cannot write to $TTY_DEV"
-#     printf '{"continue": true}\n'
-#     exit 0
-# fi
-
 # ── Wait for the block message to render before sending keystrokes ─────────────
 sleep 1
 
-debug "Sending rewind sequence via osascript"
+if [ "$_IS_MACOS" = true ]; then
+  debug "Sending rewind sequence via osascript"
 
-# Trigger paste + submit via osascript — this targets the focused input correctly.
-osascript <<'APPLESCRIPT'
+  osascript <<'APPLESCRIPT'
 tell application "System Events"
     keystroke "v" using command down
     delay 0.2
     key code 36
 end tell
 APPLESCRIPT
+else
+  if command -v ydotool &>/dev/null; then
+    debug "Sending rewind sequence via ydotool"
+
+    # ydotool uses Linux kernel key codes: 29=left ctrl, 47=v, 28=enter
+    # State: 1=press, 0=release
+    ydotool key 29:1 47:1 47:0 29:0
+    sleep 0.2
+    ydotool key 28:1 28:0
+  else
+    debug "ydotool not found — cannot inject enhanced prompt on Linux"
+    printf '{"continue": true}\n'
+    exit 0
+  fi
+fi
 
 debug "Rewind sequence sent"
 

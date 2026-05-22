@@ -1,16 +1,13 @@
 # Local settings
-.claude/settings.local.json
-.claude/*.local.md
+.claude/*
+!.claude/CLAUDE.md
 cspell.json
-.prompts.json
-.better-prompt-enhance-session
 
 # Folders
 docs/
 
 # Audit logs
 *.audit.json
-.better-prompt-audit.json
 
 # OS files
 .DS_Store
