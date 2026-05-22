@@ -5,11 +5,12 @@ Automatically corrects and enhances user prompts before they reach Claude.
 ## Features
 
 - **Grammar and spelling correction** — fixes errors whilst preserving punctuation
-- **Prompt enhancement** — refines prompts for clarity and specificity using a configurable skill
+- **Translation** — translates non-English prompts to English before enhancement
+- **Prompt enhancement** — refines prompts for clarity and specificity using a configurable agent
 - **Transparent operation** — the original prompt is blocked and replaced; Claude sees only the improved version
 - **Audit logging** — records original prompts with mistake categorisation in NDJSON format
-- **Configurable stages** — enable/disable correction, enhancement, and logging independently
-- **Model selection** — use different models for different stages (default: haiku for correction, sonnet for enhancement)
+- **Configurable stages** — enable/disable correction, translation, enhancement, and logging independently
+- **Model selection** — use different models for different stages (default: haiku for correction and translation, sonnet for enhancement)
 
 ## Prerequisites
 
@@ -51,6 +52,8 @@ Edit `~/.claude/better-prompt.local.md`:
 enabled: true
 correction: true
 correction_model: haiku
+translation: false
+translation_model: haiku
 enhancement: true
 enhancement_model: sonnet
 audit: true
@@ -67,6 +70,8 @@ resume_delay: 1.0
 | `enabled`           | boolean | `true`                                | Global on/off switch                                 |
 | `correction`        | boolean | `true`                                | Enable grammar and spelling correction               |
 | `correction_model`  | string  | `haiku`                               | Model used for correction                            |
+| `translation`       | boolean | `false`                               | Enable translation of non-English prompts            |
+| `translation_model` | string  | `haiku`                               | Model used for translation                           |
 | `enhancement`       | boolean | `true`                                | Enable prompt enhancement                            |
 | `enhancement_model` | string  | `sonnet`                              | Model used for enhancement                           |
 | `audit`             | boolean | `true`                                | Enable audit logging                                 |
@@ -79,13 +84,14 @@ Once enabled, the plugin intercepts every prompt automatically:
 
 1. You type a prompt
 2. Plugin corrects grammar and spelling (if enabled)
-3. Plugin enhances for clarity and specificity (if enabled)
-4. Original prompt is logged to the audit file (if enabled)
-5. Enhanced prompt is copied to clipboard
-6. Original prompt is submitted to Claude
-7. After Claude responds, the **Stop** hook triggers a rewind
-8. Session rewinds to before your prompt
-9. Enhanced prompt is pasted and submitted
+3. Plugin translates to English if non-English (if enabled)
+4. Plugin enhances for clarity and specificity (if enabled)
+5. Original prompt is logged to the audit file (if enabled)
+6. Enhanced prompt is copied to clipboard
+7. Original prompt is submitted to Claude
+8. After Claude responds, the **Stop** hook triggers a rewind
+9. Session rewinds to before your prompt
+10. Enhanced prompt is pasted and submitted
 
 Claude receives only the enhanced prompt. Your original prompt is briefly processed but then replaced via rewind.
 
@@ -101,9 +107,10 @@ When `debug_mode` is `true`, the plugin skips the session rewind and instead app
 
 ```
 [Better Prompt Debug]
-Original:  <your original prompt>
-Corrected: <after grammar/spelling fix>
-Enhanced:  <after enhancement>
+Original:   <your original prompt>
+Corrected:  <after grammar/spelling fix>
+Translated: <after translation, if enabled>
+Enhanced:   <after enhancement>
 ```
 
 The original prompt is sent to Claude as normal in debug mode — nothing is blocked or replaced.
@@ -118,9 +125,9 @@ The plugin registers a `UserPromptSubmit` hook (type: `command`) that runs `hook
 
 1. **Read config** — parse YAML frontmatter from `~/.claude/better-prompt.local.md`
 2. **Kill switch** — if `enabled: false`, pass through immediately
-3. **Load skill** — read `skills/prompt-enhancement/SKILL.md`, strip YAML frontmatter
-4. **Correction** — call `claude -p` with the correction model; parse returned JSON for corrected text and mistake list
-5. **Enhancement** — call `claude -p --system <skill>` with the enhancement model; fall back to inline skill content if `--system` is unsupported
+3. **Correction** — invoke the `prompt-correction` agent via `claude -p --agent`; parse returned JSON for corrected text and mistake list
+4. **Translation** — invoke the `prompt-translation` agent (if enabled); non-English prompts are translated to English
+5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent`; refines prompt for clarity
 6. **Audit** — append one NDJSON line to `audit_log_path`
 7. **Copy to clipboard** — use `pbcopy` (macOS) or `xclip`/`xsel` (Linux) to copy the enhanced prompt
 8. **Continue** — return `{"continue": true}` to let the original prompt through
@@ -177,7 +184,7 @@ One JSON object per line (NDJSON):
       "correction": "corrected phrase"
     }
   ],
-  "models": { "correction": "haiku", "enhancement": "sonnet" }
+  "models": { "correction": "haiku", "translation": null, "enhancement": "sonnet" }
 }
 ```
 
@@ -197,13 +204,14 @@ One JSON object per line (NDJSON):
   ],
   "models": {
     "correction": "haiku",
+    "translation": null,
     "enhancement": null
   }
 }
 ```
 
 - `mistake-nature` contains only `"grammar"` or `"spelling"` — punctuation changes are applied silently and never classified as mistakes
-- `models.correction` or `models.enhancement` is `null` when that stage is disabled
+- `models.correction`, `models.translation`, or `models.enhancement` is `null` when that stage is disabled
 
 ## License
 

@@ -108,6 +108,8 @@ CORRECTION=$(get_setting "correction" "true")
 CORRECTION_MODEL=$(get_setting "correction_model" "haiku")
 ENHANCEMENT=$(get_setting "enhancement" "true")
 ENHANCEMENT_MODEL=$(get_setting "enhancement_model" "sonnet")
+TRANSLATION=$(get_setting "translation" "false")
+TRANSLATION_MODEL=$(get_setting "translation_model" "haiku")
 AUDIT=$(get_setting "audit" "true")
 DEBUG=$(get_setting "debug_mode" "false")
 AUDIT_LOG="${CLAUDE_PROJECT_DIR:-.}/.prompts.json"
@@ -213,37 +215,7 @@ if [ -f "$SENTINEL" ]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 3. Load prompt-enhancement skill (strip YAML frontmatter)
-# ═════════════════════════════════════════════════════════════════════════════
-SKILL_PATH="$PLUGIN_ROOT/skills/prompt-enhancement/SKILL.md"
-
-if [ -f "$SKILL_PATH" ]; then
-    SKILL_CONTENT=$(awk '
-        /^---$/ { if (++fence == 2) { active=1; next } else { active=0; next } }
-        fence == 0 { next }
-        active { print }
-    ' "$SKILL_PATH")
-else
-    SKILL_CONTENT="Improve the prompt for clarity and contextually. Preserve the user's intent exactly."
-fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 4. Load prompt-correction skill (strip YAML frontmatter)
-# ═════════════════════════════════════════════════════════════════════════════
-CORRECTION_SKILL_PATH="$PLUGIN_ROOT/skills/prompt-correction/SKILL.md"
-
-if [ -f "$CORRECTION_SKILL_PATH" ]; then
-    CORRECTION_SKILL_CONTENT=$(awk '
-        /^---$/ { if (++fence == 2) { active=1; next } else { active=0; next } }
-        fence == 0 { next }
-        active { print }
-    ' "$CORRECTION_SKILL_PATH")
-else
-    CORRECTION_SKILL_CONTENT="Fix prompt in terms of grammar and make it clear in context. Return JSON with corrected text and mistake list."
-fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 5. Correction stage
+# 3. Correction stage
 # Fixes grammar and spelling only. Punctuation is NOT classified as a mistake.
 # Returns JSON: { "corrected": "...", "mistakes": [...] }
 # ═════════════════════════════════════════════════════════════════════════════
@@ -255,11 +227,11 @@ if [ "$CORRECTION" = "true" ]; then
     debug "Running correction with model: $CORRECTION_MODEL"
 
     CORRECTION_RESULT=$(claude -p \
-        --append-system-prompt "$CORRECTION_SKILL_CONTENT" \
-        "Correct the following prompt in terms of grammar and make it clear in context according to the guidelines above. Return ONLY the raw JSON object — no markdown, no code blocks.
+        --agent better-prompt:prompt-correction \
+        --model "$CORRECTION_MODEL" \
+        "Correct the following prompt in terms of grammar and make it clear in context. Return ONLY the raw JSON object — no markdown, no code blocks.
 
-Prompt: $WORKING_PROMPT" \
-        --model "$CORRECTION_MODEL" 2>&1) || {
+Prompt: $WORKING_PROMPT" 2>&1) || {
         warn "Correction stage failed: $CORRECTION_RESULT"
         CORRECTION_RESULT=""
     }
@@ -273,32 +245,47 @@ Prompt: $WORKING_PROMPT" \
 
         [ -n "$CORRECTED" ] && WORKING_PROMPT="$CORRECTED"
 
-        # Build mistake-nature: unique types, only "grammar" or "spelling"
+        # Build mistake-nature: unique types from whatever the agent classified
         MISTAKE_NATURE_JSON=$(printf '%s' "$CORRECTIONS_JSON" |
-            jq -c '[.[].type] | unique | map(select(. == "grammar" or . == "spelling"))' \
+            jq -c '[.[].type] | unique' \
                 2>/dev/null || echo "[]")
     fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 6. Enhancement stage
-# Uses the prompt-enhancement skill as system prompt.
+# 4. Translation stage
+# Translates non-English prompts to English. If the prompt is already in
+# English, the agent passes it through unchanged. Returns plain text only.
+# ═════════════════════════════════════════════════════════════════════════════
+if [ "$TRANSLATION" = "true" ]; then
+    debug "Running translation with model: $TRANSLATION_MODEL"
+
+    TRANSLATION_RESULT=$(claude -p \
+        --agent better-prompt:prompt-translation \
+        --model "$TRANSLATION_MODEL" \
+        "$WORKING_PROMPT" 2>&1) || {
+        warn "Translation stage failed: $TRANSLATION_RESULT"
+        TRANSLATION_RESULT=""
+    }
+
+    [ -n "$TRANSLATION_RESULT" ] && WORKING_PROMPT="$TRANSLATION_RESULT"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 5. Enhancement stage
 # ═════════════════════════════════════════════════════════════════════════════
 ENHANCED_PROMPT="$WORKING_PROMPT"
 
 if [ "$ENHANCEMENT" = "true" ]; then
     debug "Running enhancement with model: $ENHANCEMENT_MODEL"
 
-    # Attempt enhancement with --append-system-prompt flag (preferred: cleaner separation).
-    # If the installed claude version doesn't support --append-system-prompt, fall back to
-    # prepending the skill content inline as user-turn context.
     ENHANCED_RESULT=$(claude -p \
-        --append-system-prompt "$SKILL_CONTENT" \
+        --agent better-prompt:prompt-enhancement \
+        --model "$ENHANCEMENT_MODEL" \
         "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
 
-    Prompt:
-    $WORKING_PROMPT" \
-        --model "$ENHANCEMENT_MODEL" 2>&1) || {
+Prompt:
+$WORKING_PROMPT" 2>&1) || {
         warn "Enhancement stage failed: $ENHANCED_RESULT"
         ENHANCED_RESULT=""
     }
@@ -308,7 +295,7 @@ if [ "$ENHANCEMENT" = "true" ]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 7. Audit log
+# 6. Audit log
 # Appends one NDJSON line per invocation to the configured path.
 # Runs before output so the record exists even if the output step fails.
 # ═════════════════════════════════════════════════════════════════════════════
@@ -319,8 +306,10 @@ if [ "$AUDIT" = "true" ] && command -v jq &>/dev/null; then
     # accurately reflects what actually ran rather than what is configured.
     AUDIT_CORRECTION_MODEL="null"
     AUDIT_ENHANCEMENT_MODEL="null"
+    AUDIT_TRANSLATION_MODEL="null"
     [ "$CORRECTION" = "true" ] && AUDIT_CORRECTION_MODEL="\"$CORRECTION_MODEL\""
     [ "$ENHANCEMENT" = "true" ] && AUDIT_ENHANCEMENT_MODEL="\"$ENHANCEMENT_MODEL\""
+    [ "$TRANSLATION" = "true" ] && AUDIT_TRANSLATION_MODEL="\"$TRANSLATION_MODEL\""
 
     jq -nc \
         --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -331,6 +320,7 @@ if [ "$AUDIT" = "true" ] && command -v jq &>/dev/null; then
         --argjson mistakes "$CORRECTIONS_JSON" \
         --argjson correction_model "$AUDIT_CORRECTION_MODEL" \
         --argjson enhancement_model "$AUDIT_ENHANCEMENT_MODEL" \
+        --argjson translation_model "$AUDIT_TRANSLATION_MODEL" \
         '{
             date:             $date,
             prompt:           $prompt,
@@ -340,6 +330,7 @@ if [ "$AUDIT" = "true" ] && command -v jq &>/dev/null; then
             mistakes:         $mistakes,
             models: {
                 correction:   $correction_model,
+                translation:  $translation_model,
                 enhancement:  $enhancement_model
             }
         }' >>"$AUDIT_LOG"
@@ -348,7 +339,7 @@ fi
 # ═════════════════════════════════════════════════════════════════════════════
 # 8. Determine final prompt
 # The final prompt is the last enabled stage's output, in order:
-#   original → corrected (if correction enabled) → enhanced (if enhancement enabled)
+#   original → corrected → translated → enhanced
 # ═════════════════════════════════════════════════════════════════════════════
 FINAL_PROMPT="$ENHANCED_PROMPT"
 
@@ -376,8 +367,8 @@ fi
 #              Stop hook rewinds and pastes it so Claude receives the improved version.
 # ═════════════════════════════════════════════════════════════════════════════
 if [ "$DEBUG" = "true" ]; then
-    DEBUG_MSG=$(printf '[Better Prompt Debug]\nOriginal:  %s\nCorrected: %s\nEnhanced:  %s' \
-        "$ORIGINAL_PROMPT" "$WORKING_PROMPT" "$ENHANCED_PROMPT")
+    DEBUG_MSG=$(printf '[Better Prompt Debug]\nOriginal:   %s\nCorrected:  %s\nTranslated: %s\nEnhanced:   %s' \
+        "$ORIGINAL_PROMPT" "$WORKING_PROMPT" "${TRANSLATION_RESULT:-$WORKING_PROMPT}" "$ENHANCED_PROMPT")
     ESCAPED_DEBUG=$(json_escape "$DEBUG_MSG")
     printf '{"decision": "block", "reason": %s, "suppressOutput": false}\n' "$ESCAPED_DEBUG"
 else

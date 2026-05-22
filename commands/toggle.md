@@ -1,6 +1,6 @@
 ---
 name: better-prompt:toggle
-description: Quick toggle for specific better-prompt plugin stages (enabled, correction, enhancement, audit, debug_mode)
+description: Quick toggle for specific better-prompt plugin stages (enabled, correction, translation, enhancement, audit, debug_mode)
 argument-hint: "<stage> [on|off]"
 allowed-tools:
   - Read
@@ -24,6 +24,7 @@ If no [on|off] argument is provided, toggle the current state (flip it).
 |-------|-------------|
 | `enabled` | Global on/off switch for the entire plugin |
 | `correction` | Grammar and spelling correction stage |
+| `translation` | Translation of non-English prompts to English |
 | `enhancement` | Prompt enhancement stage |
 | `audit` | Audit logging of original prompts |
 | `debug_mode` | Show intermediate steps (correction, enhancement) |
@@ -31,6 +32,7 @@ If no [on|off] argument is provided, toggle the current state (flip it).
 ## Examples
 
 - `/better-prompt:toggle correction off` - Disable correction
+- `/better-prompt:toggle translation on` - Enable translation
 - `/better-prompt:toggle audit` - Toggle audit logging (flip current state)
 - `/better-prompt:toggle debug_mode on` - Enable debug mode
 - `/better-prompt:toggle enabled` - Toggle entire plugin on/off

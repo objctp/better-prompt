@@ -46,7 +46,7 @@ Display each log entry in a readable format:
 **Mistakes Found:**
   - [grammar] "incorrect phrase" → "corrected phrase"
   - [spelling] "misspeling" → "misspelling"
-**Models Used:** correction=haiku, enhancement=sonnet
+**Models Used:** correction=haiku, translation=haiku, enhancement=sonnet
 ```
 
 ## Arguments

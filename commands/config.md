@@ -33,6 +33,8 @@ Explain each setting and its purpose:
 | `enabled` | boolean | `true` | Global on/off switch for the entire plugin |
 | `correction` | boolean | `true` | Enable grammar and spelling correction stage |
 | `correction_model` | string | `haiku` | Model to use for correction (haiku, sonnet, opus) |
+| `translation` | boolean | `false` | Enable translation of non-English prompts to English |
+| `translation_model` | string | `haiku` | Model to use for translation (haiku, sonnet, opus) |
 | `enhancement` | boolean | `true` | Enable prompt enhancement stage |
 | `enhancement_model` | string | `sonnet` | Model to use for enhancement (haiku, sonnet, opus) |
 | `audit` | boolean | `true` | Enable audit logging of original prompts |
@@ -45,7 +47,7 @@ If the user provides arguments (e.g., `/better-prompt:config debug_mode true`), 
 
 If no arguments provided, ask the user which setting they want to configure:
 
-1. "Which setting would you like to configure? (enabled, correction, correction_model, enhancement, enhancement_model, audit, audit_log_path, debug_mode)"
+1. "Which setting would you like to configure? (enabled, correction, correction_model, translation, translation_model, enhancement, enhancement_model, audit, audit_log_path, debug_mode)"
 2. "What value would you like to set it to?"
 
 ## Updating Settings
@@ -57,6 +59,8 @@ To update settings, create or edit the YAML frontmatter in `~/.claude/better-pro
 enabled: true
 correction: true
 correction_model: haiku
+translation: false
+translation_model: haiku
 enhancement: true
 enhancement_model: sonnet
 audit: true
@@ -75,6 +79,8 @@ Suggest quick actions to the user:
 - "Enable debug mode" - Set debug_mode to true
 - "Disable audit logging" - Set audit to false
 - "Change correction model" - Update correction_model
+- "Enable translation" - Set translation to true
+- "Change translation model" - Update translation_model
 
 ## Tips
 

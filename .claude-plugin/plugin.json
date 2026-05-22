@@ -1,19 +1,31 @@
 {
   "name": "better-prompt",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Automatically corrects and enhances user prompts before submission to Claude",
   "author": {
-    "name": "Objctp"
+    "name": "objct",
+    "url": "https://objct.link"
   },
   "homepage": "https://github.com/objctp/better-prompt",
-  "keywords": ["prompt", "correction", "enhancement", "grammar", "quality"],
+  "repository": "https://github.com/objctp/better-prompt",
+  "license": "MIT",
+  "keywords": [
+    "claude-code-plugin",
+    "prompt",
+    "correction",
+    "enhancement",
+    "grammar",
+    "translation",
+    "quality"
+  ],
   "commands": [
     "./commands/config.md",
     "./commands/logs.md",
     "./commands/toggle.md"
   ],
-  "skills": [
-    "./skills/prompt-enhancement/SKILL.md",
-    "./skills/prompt-correction/SKILL.md"
+  "agents": [
+    "./agents/prompt-correction.md",
+    "./agents/prompt-translation.md",
+    "./agents/prompt-enhancement.md"
   ]
 }
