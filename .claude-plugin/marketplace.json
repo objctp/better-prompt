@@ -1,0 +1,13 @@
+{
+  "name": "objct-plugins",
+  "owner": {
+    "name": "objctp"
+  },
+  "plugins": [
+    {
+      "name": "better-prompt",
+      "source": "./",
+      "description": "Automatically corrects and enhances user prompts before submission to Claude"
+    }
+  ]
+}

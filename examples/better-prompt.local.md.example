@@ -9,8 +9,13 @@ enabled: true
 correction: true
 correction_model: haiku
 
+# Translation to English stage
+# If the prompt is already in English it is passed through unchanged.
+translation: false
+translation_model: haiku
+
 # Prompt enhancement stage
-enhancement: true
+enhancement: false
 enhancement_model: sonnet
 
 # Audit logging of original prompts
@@ -28,13 +33,24 @@ This file contains settings for the better-prompt plugin. Edit the YAML frontmat
 
 - `enabled`: Global on/off switch
 - `correction`: Fix grammar and spelling errors
+- `translation`: Translate non-English prompts into English before enhancement
 - `enhancement`: Improve clarity and specificity
-- `audit`: Log original prompts with mistake analysis
+- `audit`: Log all pipeline stages with mistake analysis
 - `debug_mode`: Show intermediate steps
+
+## Pipeline Order
+
+Each enabled stage feeds its output into the next:
+
+```
+original → [correction] → [translation] → [enhancement] → final
+```
+
+Disabling a stage passes its input through unchanged.
 
 ## Model Options
 
-- `haiku`: Fast, efficient (recommended for correction)
+- `haiku`: Fast, efficient (recommended for correction and translation)
 - `sonnet`: Balanced capability and speed (recommended for enhancement)
 - `opus`: Highest quality (slower, more expensive)
 
@@ -42,6 +58,6 @@ This file contains settings for the better-prompt plugin. Edit the YAML frontmat
 
 - Changes take effect immediately
 - Punctuation corrections are applied but NOT classified as mistakes
-- The audit log grows indefinitely — consider archiving if needed
+- The audit log records every stage (`corrected`, `translated`, `enhanced`) and is `null` for disabled stages' models — it grows indefinitely, so consider archiving if needed
 - Use `/better-prompt:config` for interactive configuration
 - Use `/better-prompt:toggle` for quick on/off of specific stages

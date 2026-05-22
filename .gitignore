@@ -1,4 +1,5 @@
 # Local settings
+.claude/settings.local.json
 .claude/*.local.md
 cspell.json
 .prompts.json
@@ -14,11 +15,24 @@ docs/
 .DS_Store
 Thumbs.db
 
+# node
+node_modules/
+dist/
+
+# Test outputs
+test-results/
+coverage/
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Backups
+# Backup files
+*.bak
+*.backup
 *.bckp.*
+
+# env
+.env
