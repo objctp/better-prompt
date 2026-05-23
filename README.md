@@ -68,7 +68,7 @@ Add to your config — OpenCode auto-installs npm plugins via Bun at startup.
 git clone https://github.com/objctp/better-prompt && cd better-prompt && opencode
 ```
 
-On first run, the plugin copies `examples/better-prompt.local.md.example` to `~/.claude/better-prompt.local.md` if no config file exists.
+On first run, the plugin copies `config/better-prompt.local.md.example` to `~/.claude/better-prompt.local.md` if no config file exists.
 
 ## Configuration
 

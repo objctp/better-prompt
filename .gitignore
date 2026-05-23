@@ -12,6 +12,9 @@ docs/
 # OS files
 .DS_Store
 Thumbs.db
+*.tmp
+*.temp
+tmp/
 
 # node
 node_modules/

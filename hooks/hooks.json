@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'mkdir -p ~/.claude && [ ! -f ~/.claude/better-prompt.local.md ] && cp \"${CLAUDE_PLUGIN_ROOT}/examples/better-prompt.local.md.example\" ~/.claude/better-prompt.local.md 2>/dev/null || true; mkdir -p \"$CLAUDE_PROJECT_DIR/.claude\" && touch \"$CLAUDE_PROJECT_DIR/.claude/prompts.json\"'",
+            "command": "bash -c 'mkdir -p ~/.claude && [ ! -f ~/.claude/better-prompt.local.md ] && cp \"${CLAUDE_PLUGIN_ROOT}/config/better-prompt.local.md.example\" ~/.claude/better-prompt.local.md 2>/dev/null || true; mkdir -p \"$CLAUDE_PROJECT_DIR/.claude\" && touch \"$CLAUDE_PROJECT_DIR/.claude/prompts.json\"'",
             "statusMessage": "Placing config file and .prompts.json on project root",
             "timeout": 5
           }
