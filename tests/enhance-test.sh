@@ -24,15 +24,21 @@ function tear_down() {
 ###
 
 function test_warn_outputs_to_stderr() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _warn "something went wrong" 2>"$_OUT"
   local result
-  result=$(_warn "something went wrong" 2>&1 1>/dev/null)
+  result=$(cat "$_OUT")
   assert_contains "WARNING" "$result"
   assert_contains "something went wrong" "$result"
 }
 
 function test_warn_includes_prefix() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _warn "test" 2>"$_OUT"
   local result
-  result=$(_warn "test" 2>&1 1>/dev/null)
+  result=$(cat "$_OUT")
   assert_string_starts_with "[better-prompt]" "$result"
 }
 
@@ -42,8 +48,11 @@ function test_warn_returns_zero() {
 }
 
 function test_warn_empty_message() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _warn "" 2>"$_OUT"
   local result
-  result=$(_warn "" 2>&1 1>/dev/null)
+  result=$(cat "$_OUT")
   assert_contains "WARNING" "$result"
 }
 
@@ -53,23 +62,32 @@ function test_warn_empty_message() {
 
 function test_debug_outputs_when_debug_true() {
   DEBUG=true
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _debug "verbose msg" 2>"$_OUT"
   local result
-  result=$(_debug "verbose msg" 2>&1 1>/dev/null)
+  result=$(cat "$_OUT")
   assert_contains "verbose msg" "$result"
   assert_contains "[better-prompt] DEBUG:" "$result"
 }
 
 function test_debug_silent_when_debug_false() {
   DEBUG=false
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _debug "verbose msg" 2>"$_OUT"
   local result
-  result=$(_debug "verbose msg" 2>&1 1>/dev/null)
+  result=$(cat "$_OUT")
   assert_empty "$result"
 }
 
 function test_debug_silent_when_debug_unset() {
   unset DEBUG
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _debug "verbose msg" 2>"$_OUT"
   local result
-  result=$(_debug "verbose msg" 2>&1 1>/dev/null)
+  result=$(cat "$_OUT")
   assert_empty "$result"
 }
 
@@ -96,48 +114,70 @@ function test_debug_returns_zero_when_unset() {
 ###
 
 function test_json_escape_plain_string() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape "hello world" >"$_OUT"
   local result
-  result=$(_json_escape "hello world")
+  result=$(cat "$_OUT")
   assert_equals '"hello world"' "$result"
 }
 
 function test_json_escape_string_with_quotes() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape 'say "hi"' >"$_OUT"
   local result
-  result=$(_json_escape 'say "hi"')
+  result=$(cat "$_OUT")
   assert_contains "say" "$result"
   assert_contains "hi" "$result"
 }
 
 function test_json_escape_string_with_backslash() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape 'path\to\file' >"$_OUT"
   local result
-  result=$(_json_escape 'path\to\file')
+  result=$(cat "$_OUT")
   assert_not_empty "$result"
 }
 
 function test_json_escape_empty_string() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape "" >"$_OUT"
   local result
-  result=$(_json_escape "")
+  result=$(cat "$_OUT")
   assert_equals '""' "$result"
 }
 
 function test_json_escape_multiline() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape $'line1\nline2' >"$_OUT"
   local result
-  result=$(_json_escape $'line1\nline2')
+  result=$(cat "$_OUT")
   assert_contains "line1" "$result"
   assert_contains "line2" "$result"
 }
 
 function test_json_escape_special_chars() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape $'tab\there' >"$_OUT"
   local result
-  result=$(_json_escape $'tab\there')
+  result=$(cat "$_OUT")
   assert_not_empty "$result"
 }
 
 function test_json_escape_without_jq() {
   local orig_path="$PATH"
   PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -E '/jq$|/jq/' | tr '\n' ':')
+  export PATH
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape 'hello "world"' >"$_OUT"
   local result
-  result=$(_json_escape 'hello "world"')
+  result=$(cat "$_OUT")
   assert_contains "hello" "$result"
   assert_contains "world" "$result"
   PATH="$orig_path"
@@ -195,35 +235,58 @@ function test_atomic_write_returns_zero_on_success() {
 ###
 
 function test_md5_returns_hash() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _md5 "test input" >"$_OUT"
   local result
-  result=$(_md5 "test input")
+  result=$(cat "$_OUT")
   assert_not_empty "$result"
   assert_matches "^[a-f0-9]+$" "$result"
 }
 
 function test_md5_consistent() {
-  local h1 h2
-  h1=$(_md5 "consistent")
-  h2=$(_md5 "consistent")
+  local _OUT1
+  _OUT1=$(bashunit::temp_file)
+  _md5 "consistent" >"$_OUT1"
+  local _OUT2
+  _OUT2=$(bashunit::temp_file)
+  _md5 "consistent" >"$_OUT2"
+  local h1
+  h1=$(cat "$_OUT1")
+  local h2
+  h2=$(cat "$_OUT2")
   assert_equals "$h1" "$h2"
 }
 
 function test_md5_different_inputs() {
-  local h1 h2
-  h1=$(_md5 "input_a")
-  h2=$(_md5 "input_b")
+  local _OUT1
+  _OUT1=$(bashunit::temp_file)
+  _md5 "input_a" >"$_OUT1"
+  local _OUT2
+  _OUT2=$(bashunit::temp_file)
+  _md5 "input_b" >"$_OUT2"
+  local h1
+  h1=$(cat "$_OUT1")
+  local h2
+  h2=$(cat "$_OUT2")
   assert_not_same "$h1" "$h2"
 }
 
 function test_md5_empty_string() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _md5 "" >"$_OUT"
   local result
-  result=$(_md5 "")
+  result=$(cat "$_OUT")
   assert_not_empty "$result"
 }
 
 function test_md5_long_string() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _md5 "$(seq 1 1000)" >"$_OUT"
   local result
-  result=$(_md5 "$(seq 1 1000)")
+  result=$(cat "$_OUT")
   assert_not_empty "$result"
   assert_matches "^[a-f0-9]+$" "$result"
 }
@@ -233,17 +296,25 @@ function test_md5_long_string() {
 ###
 
 function test_get_setting_returns_value() {
+  unset _CFG 2>/dev/null || true
+  declare -gA _CFG=()
   _CFG["theme"]="dark"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _get_setting "theme" "light" >"$_OUT"
   local result
-  result=$(_get_setting "theme" "light")
+  result=$(cat "$_OUT")
   assert_equals "dark" "$result"
 }
 
 function test_get_setting_returns_default() {
   unset _CFG 2>/dev/null || true
   declare -gA _CFG=()
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _get_setting "missing_key" "default_val" >"$_OUT"
   local result
-  result=$(_get_setting "missing_key" "default_val")
+  result=$(cat "$_OUT")
   assert_equals "default_val" "$result"
 }
 
@@ -251,16 +322,22 @@ function test_get_setting_empty_value_returns_default() {
   unset _CFG 2>/dev/null || true
   declare -gA _CFG=()
   _CFG["empty_key"]=""
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _get_setting "empty_key" "fallback" >"$_OUT"
   local result
-  result=$(_get_setting "empty_key" "fallback")
+  result=$(cat "$_OUT")
   assert_equals "fallback" "$result"
 }
 
 function test_get_setting_empty_default() {
   unset _CFG 2>/dev/null || true
   declare -gA _CFG=()
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _get_setting "absent_key" "" >"$_OUT"
   local result
-  result=$(_get_setting "absent_key" "")
+  result=$(cat "$_OUT")
   assert_equals "" "$result"
 }
 
@@ -335,35 +412,563 @@ function test_parse_config_empty_file() {
 ###
 
 function test_read_stdin_payload_reads_pipe() {
+  local _IN
+  _IN=$(bashunit::temp_file)
+  printf '%s' '{"prompt":"hello"}' >"$_IN"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _read_stdin_payload <"$_IN" >"$_OUT"
   local result
-  result=$(printf '%s' '{"prompt":"hello"}' | _read_stdin_payload)
+  result=$(cat "$_OUT")
   assert_equals '{"prompt":"hello"}' "$result"
 }
 
 function test_read_stdin_payload_empty_pipe() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _read_stdin_payload </dev/null >"$_OUT"
   local result
-  result=$(_read_stdin_payload </dev/null)
+  result=$(cat "$_OUT")
   assert_empty "$result"
 }
 
 function test_read_stdin_payload_multiline() {
   local payload=$'line1\nline2\nline3'
+  local _IN
+  _IN=$(bashunit::temp_file)
+  printf '%s' "$payload" >"$_IN"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _read_stdin_payload <"$_IN" >"$_OUT"
   local result
-  result=$(printf '%s' "$payload" | _read_stdin_payload)
+  result=$(cat "$_OUT")
   assert_contains "line1" "$result"
   assert_contains "line3" "$result"
 }
 
 function test_read_stdin_payload_preserves_json() {
   local json='{"prompt":"test","session_id":"abc-123"}'
+  local _IN
+  _IN=$(bashunit::temp_file)
+  printf '%s' "$json" >"$_IN"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _read_stdin_payload <"$_IN" >"$_OUT"
   local result
-  result=$(printf '%s' "$json" | _read_stdin_payload)
+  result=$(cat "$_OUT")
   assert_equals "$json" "$result"
+}
+
+###
+### enhance_extract_prompt
+###
+
+function test_extract_prompt_simple() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_extract_prompt '{"prompt":"hello world"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "hello world" "$result"
+}
+
+function test_extract_prompt_empty() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_extract_prompt '{}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+}
+
+function test_extract_prompt_missing() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_extract_prompt '{"session_id":"abc"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+}
+
+function test_extract_prompt_with_session() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_extract_prompt '{"prompt":"test prompt","session_id":"ses-1"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "test prompt" "$result"
+}
+
+function test_extract_prompt_special_chars() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_extract_prompt '{"prompt":"hello \"world\" & <tags>"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains "hello" "$result"
+}
+
+function test_extract_prompt_invalid_json() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_extract_prompt 'not json at all' >"$_OUT" 2>/dev/null || true
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+}
+
+###
+### enhance_resolve_session_id
+###
+
+function test_resolve_session_id_from_payload() {
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  CLAUDE_SESSION_ID=""
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '{"session_id":"abc-123"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "abc-123" "$result"
+  CLAUDE_SESSION_ID="$orig_session"
+}
+
+function test_resolve_session_id_from_env() {
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  CLAUDE_SESSION_ID="env-session-1"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "env-session-1" "$result"
+  CLAUDE_SESSION_ID="$orig_session"
+}
+
+function test_resolve_session_id_payload_takes_precedence() {
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  CLAUDE_SESSION_ID="env-session"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '{"session_id":"payload-session"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "payload-session" "$result"
+  CLAUDE_SESSION_ID="$orig_session"
+}
+
+function test_resolve_session_id_invalid_format() {
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  CLAUDE_SESSION_ID=""
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '{"session_id":"bad session!!!"}' >"$_OUT" 2>/dev/null
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+  CLAUDE_SESSION_ID="$orig_session"
+}
+
+function test_resolve_session_id_empty_input() {
+  local orig_home="$HOME"
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  HOME="/nonexistent/home"
+  CLAUDE_SESSION_ID=""
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+  HOME="$orig_home"
+  CLAUDE_SESSION_ID="$orig_session"
+}
+
+function test_resolve_session_id_valid_alphanumeric() {
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  CLAUDE_SESSION_ID=""
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '{"session_id":"abc123_def-456"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "abc123_def-456" "$result"
+  CLAUDE_SESSION_ID="$orig_session"
+}
+
+function test_resolve_session_id_directory_lookup_macos() {
+  if [[ "${_IS_MACOS:-}" != true ]]; then
+    return 0
+  fi
+  local orig_home="$HOME"
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local session_dir="$tmpdir/.claude/session-env"
+  mkdir -p "$session_dir/my-session-xyz"
+  touch "$session_dir/my-session-xyz"
+  HOME="$tmpdir"
+  CLAUDE_SESSION_ID=""
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "my-session-xyz" "$result"
+  HOME="$orig_home"
+  CLAUDE_SESSION_ID="$orig_session"
+  rm -rf "$tmpdir"
+}
+
+function test_resolve_session_id_directory_lookup_fallback() {
+  local orig_home="$HOME"
+  local orig_session="${CLAUDE_SESSION_ID:-}"
+  HOME="/nonexistent/path/no/sessions/here"
+  CLAUDE_SESSION_ID=""
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_resolve_session_id '' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+  HOME="$orig_home"
+  CLAUDE_SESSION_ID="$orig_session"
+}
+
+###
+### enhance_is_directive
+###
+
+function test_is_directive_slash() {
+  enhance_is_directive "/help"
+  assert_successful_code
+}
+
+function test_is_directive_bang() {
+  enhance_is_directive "!run command"
+  assert_successful_code
+}
+
+function test_is_directive_normal_text() {
+  enhance_is_directive "hello world"
+  assert_general_error
+}
+
+function test_is_directive_empty_string() {
+  enhance_is_directive ""
+  assert_general_error
+}
+
+function test_is_directive_slash_longer() {
+  enhance_is_directive "/explain this code"
+  assert_successful_code
+}
+
+###
+### enhance_check_enabled
+###
+
+function test_check_enabled_true() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_check_enabled "true" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "true" "$result"
+}
+
+function test_check_enabled_false() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_check_enabled "false" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "false" "$result"
+}
+
+###
+### enhance_check_sentinel
+###
+
+function test_check_sentinel_no_file() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  enhance_check_sentinel "$tmpdir/nonexistent-sentinel" "some prompt"
+  assert_general_error
+  rm -rf "$tmpdir"
+}
+
+function test_check_sentinel_matching_hash() {
+  local tmpdir sentinel
+  tmpdir=$(mktemp -d)
+  sentinel="$tmpdir/.better-prompt-sentinel"
+  local _H
+  _H=$(bashunit::temp_file)
+  _md5 "hello world" >"$_H"
+  local hash
+  hash=$(cat "$_H")
+  _atomic_write "$sentinel" "$hash"
+  enhance_check_sentinel "$sentinel" "hello world"
+  assert_successful_code
+  rm -rf "$tmpdir"
+}
+
+function test_check_sentinel_mismatched_hash() {
+  local tmpdir sentinel
+  tmpdir=$(mktemp -d)
+  sentinel="$tmpdir/.better-prompt-sentinel"
+  local _H
+  _H=$(bashunit::temp_file)
+  _md5 "old prompt" >"$_H"
+  local hash
+  hash=$(cat "$_H")
+  _atomic_write "$sentinel" "$hash"
+  enhance_check_sentinel "$sentinel" "new different prompt"
+  assert_general_error
+  rm -rf "$tmpdir"
+}
+
+function test_check_sentinel_stale_hash_removed() {
+  local tmpdir sentinel
+  tmpdir=$(mktemp -d)
+  sentinel="$tmpdir/.better-prompt-sentinel"
+  _atomic_write "$sentinel" "stale"
+  touch -t 202501010000 "$sentinel"
+  enhance_check_sentinel "$sentinel" "some prompt"
+  assert_general_error
+  [[ ! -f "$sentinel" ]]
+  assert_successful_code
+  rm -rf "$tmpdir"
+}
+
+###
+### enhance_format_response
+###
+
+function test_format_response_normal() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_format_response "false" "orig" "corr" "trans" "enh" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains '"decision"' "$result"
+  assert_contains '"block"' "$result"
+  assert_contains "better-prompt" "$result"
+}
+
+function test_format_response_debug() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_format_response "true" "orig" "corr" "trans" "enh" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains '"decision"' "$result"
+  assert_contains '"block"' "$result"
+  assert_contains "Better Prompt Debug" "$result"
+}
+
+function test_format_response_is_valid_json() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_format_response "false" "orig" "corr" "trans" "enh" >"$_OUT"
+  jq . "$_OUT" >/dev/null 2>&1
+  assert_successful_code
+}
+
+function test_format_response_debug_shows_prompts() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_format_response "true" "original text" "corrected text" "working text" "enhanced text" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains "original text" "$result"
+  assert_contains "corrected text" "$result"
+  assert_contains "working text" "$result"
+  assert_contains "enhanced text" "$result"
+}
+
+function test_format_response_normal_has_suppress_output() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_format_response "false" "orig" "corr" "trans" "enh" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains "suppressOutput" "$result"
+}
+
+###
+### enhance_copy_to_clipboard (macOS only, uses pbcopy mock)
+###
+
+function test_copy_to_clipboard_macos() {
+  if [[ "$_IS_MACOS" != true ]]; then
+    return 0
+  fi
+  local mock_dir orig_path
+  mock_dir=$(mktemp -d)
+  orig_path="$PATH"
+  cat >"$mock_dir/pbcopy" <<'MOCK'
+#!/usr/bin/env bash
+cat > /tmp/better-prompt-test-clip
+MOCK
+  chmod +x "$mock_dir/pbcopy"
+  PATH="$mock_dir:$PATH"
+  enhance_copy_to_clipboard "test clipboard content"
+  local content
+  content=$(cat /tmp/better-prompt-test-clip)
+  assert_equals "test clipboard content" "$content"
+  rm -f /tmp/better-prompt-test-clip
+  rm -rf "$mock_dir"
+  PATH="$orig_path"
+  export PATH
+}
+
+function test_copy_to_clipboard_xclip() {
+  local orig_macos="${_IS_MACOS:-}"
+  _IS_MACOS=false
+  local mock_dir
+  mock_dir=$(mktemp -d)
+  local orig_path="$PATH"
+  cat >"$mock_dir/xclip" <<'MOCK'
+#!/usr/bin/env bash
+cat > /tmp/better-prompt-test-clip-xclip
+MOCK
+  chmod +x "$mock_dir/xclip"
+  PATH="$mock_dir:$PATH"
+  enhance_copy_to_clipboard "xclip content"
+  if [[ -f /tmp/better-prompt-test-clip-xclip ]]; then
+    local content
+    content=$(cat /tmp/better-prompt-test-clip-xclip)
+    assert_equals "xclip content" "$content"
+    rm -f /tmp/better-prompt-test-clip-xclip
+  fi
+  rm -rf "$mock_dir"
+  PATH="$orig_path"
+  export PATH
+  _IS_MACOS="$orig_macos"
+}
+
+function test_copy_to_clipboard_no_utility() {
+  local orig_macos="${_IS_MACOS:-}"
+  _IS_MACOS=false
+  local mock_dir
+  mock_dir=$(mktemp -d)
+  local orig_path="$PATH"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  PATH="$mock_dir:$PATH"
+  enhance_copy_to_clipboard "no utility content" 2>"$_OUT"
+  local stderr_output
+  stderr_output=$(cat "$_OUT")
+  assert_contains "clipboard" "$stderr_output" || assert_empty "$stderr_output"
+  _IS_MACOS="$orig_macos"
+  rm -rf "$mock_dir"
+  PATH="$orig_path"
+  export PATH
+}
+
+###
+### enhance_spawn_stop_hook (mocked)
+###
+
+function test_spawn_stop_hook_invokes_nohup() {
+  local mock_dir
+  mock_dir=$(mktemp -d)
+  local orig_path="$PATH"
+  local orig_plugin_root="${PLUGIN_ROOT:-}"
+  cat >"$mock_dir/nohup" <<'MOCK'
+#!/usr/bin/env bash
+printf 'NOHUP:%s' "$*" > /tmp/better-prompt-spawn-test
+MOCK
+  chmod +x "$mock_dir/nohup"
+  PATH="$mock_dir:$PATH"
+  PLUGIN_ROOT="/fake/plugin/root"
+  rm -f /tmp/better-prompt-spawn-test
+  enhance_spawn_stop_hook "test-session-abc" 2>/dev/null || true
+  sleep 1
+  if [[ -f /tmp/better-prompt-spawn-test ]]; then
+    local content
+    content=$(cat /tmp/better-prompt-spawn-test)
+    assert_contains "stop-hook" "$content" || true
+    rm -f /tmp/better-prompt-spawn-test
+  fi
+  rm -rf "$mock_dir"
+  PATH="$orig_path"
+  export PATH
+  PLUGIN_ROOT="$orig_plugin_root"
 }
 
 ###
 ### Main integration tests (subprocess)
 ###
+
+function _setup_mock_env() {
+  _MOCK_DIR=$(mktemp -d)
+  _ORIG_PATH="$PATH"
+
+  cat >"$_MOCK_DIR/claude" <<'MOCK'
+#!/usr/bin/env bash
+echo '{"result":"mocked enhanced prompt","session_id":"mock-session-123"}'
+MOCK
+  chmod +x "$_MOCK_DIR/claude"
+
+  cat >"$_MOCK_DIR/pbcopy" <<'MOCK'
+#!/usr/bin/env bash
+cat > /dev/null
+MOCK
+  chmod +x "$_MOCK_DIR/pbcopy"
+
+  cat >"$_MOCK_DIR/nohup" <<'MOCK'
+#!/usr/bin/env bash
+shift
+echo "nohup mocked $*"
+MOCK
+  chmod +x "$_MOCK_DIR/nohup"
+
+  PATH="$_MOCK_DIR:$PATH"
+  export PATH
+}
+
+function _setup_stage_mock_env() {
+  _MOCK_DIR=$(mktemp -d)
+  _ORIG_PATH="$PATH"
+
+  cat >"$_MOCK_DIR/claude" <<'MOCK'
+#!/usr/bin/env bash
+if echo "$*" | grep -q "prompt-correction"; then
+  echo '{"corrected":"corrected prompt text","mistakes":[{"type":"grammar"}]}'
+elif echo "$*" | grep -q "prompt-translation"; then
+  echo 'translated prompt text'
+elif echo "$*" | grep -q "prompt-enhancement"; then
+  echo '{"result":"enhanced prompt text","session_id":"mock-session-456"}'
+else
+  echo '{"result":"mocked enhanced prompt","session_id":"mock-session-123"}'
+fi
+MOCK
+  chmod +x "$_MOCK_DIR/claude"
+
+  cat >"$_MOCK_DIR/pbcopy" <<'MOCK'
+#!/usr/bin/env bash
+cat > /dev/null
+MOCK
+  chmod +x "$_MOCK_DIR/pbcopy"
+
+  cat >"$_MOCK_DIR/nohup" <<'MOCK'
+#!/usr/bin/env bash
+:
+MOCK
+  chmod +x "$_MOCK_DIR/nohup"
+
+  PATH="$_MOCK_DIR:$PATH"
+  export PATH
+}
+
+function _teardown_mock_env() {
+  rm -rf "$_MOCK_DIR"
+  PATH="$_ORIG_PATH"
+  export PATH
+  unset _MOCK_DIR _ORIG_PATH
+}
 
 function test_main_outputs_continue_when_disabled() {
   local tmpdir tmpcfg
@@ -420,44 +1025,6 @@ function test_main_outputs_valid_json_on_missing_session_id() {
   rm -rf "$tmpdir"
 }
 
-###
-### Main sourced tests (with mocking)
-###
-
-function _setup_mock_env() {
-  _MOCK_DIR=$(mktemp -d)
-  _ORIG_PATH="$PATH"
-
-  cat >"$_MOCK_DIR/claude" <<'MOCK'
-#!/usr/bin/env bash
-echo '{"result":"mocked enhanced prompt","session_id":"mock-session-123"}'
-MOCK
-  chmod +x "$_MOCK_DIR/claude"
-
-  cat >"$_MOCK_DIR/pbcopy" <<'MOCK'
-#!/usr/bin/env bash
-cat > /dev/null
-MOCK
-  chmod +x "$_MOCK_DIR/pbcopy"
-
-  cat >"$_MOCK_DIR/nohup" <<'MOCK'
-#!/usr/bin/env bash
-shift
-echo "nohup mocked $*"
-MOCK
-  chmod +x "$_MOCK_DIR/nohup"
-
-  PATH="$_MOCK_DIR:$PATH"
-  export PATH
-}
-
-function _teardown_mock_env() {
-  rm -rf "$_MOCK_DIR"
-  PATH="$_ORIG_PATH"
-  export PATH
-  unset _MOCK_DIR _ORIG_PATH
-}
-
 function test_main_sourced_outputs_continue_when_disabled() {
   _setup_mock_env
   local tmpdir tmpcfg
@@ -465,7 +1032,7 @@ function test_main_sourced_outputs_continue_when_disabled() {
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
   printf '%s\n' '---' 'enabled: false' >"$tmpcfg"
   local result
-  result=$(printf '%s' '{"prompt":"hello","session_id":"ses1"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="ses1" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>/dev/null || true)
+  result=$(printf '%s' '{"prompt":"hello","session_id":"abc"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>/dev/null || true)
   assert_contains "continue" "$result"
   rm -rf "$tmpdir"
   _teardown_mock_env
@@ -478,7 +1045,7 @@ function test_main_sourced_outputs_continue_on_slash_directive() {
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
   printf '%s\n' '---' 'enabled: true' >"$tmpcfg"
   local result
-  result=$(printf '%s' '{"prompt":"/help","session_id":"ses2"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="ses2" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>/dev/null || true)
+  result=$(printf '%s' '{"prompt":"/help","session_id":"abc123"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>/dev/null || true)
   assert_contains "continue" "$result"
   rm -rf "$tmpdir"
   _teardown_mock_env
@@ -562,8 +1129,11 @@ function test_main_sourced_sentinel_prevents_loop() {
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
   printf '%s\n' '---' 'enabled: true' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
   local sentinel="$tmpdir/.claude/.better-prompt-sentinel"
+  local _H
+  _H=$(bashunit::temp_file)
+  _md5 "hello world" >"$_H"
   local hash
-  hash=$(_md5 "hello world")
+  hash=$(cat "$_H")
   _atomic_write "$sentinel" "$hash"
   local result
   result=$(printf '%s' '{"prompt":"hello world","session_id":"ses8"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="ses8" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>/dev/null || true)
@@ -576,6 +1146,7 @@ function test_main_sourced_audit_log_written() {
   _setup_mock_env
   local tmpdir tmpcfg
   tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/.claude"
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
   printf '%s\n' '---' 'enabled: true' 'correction: false' 'enhancement: false' 'translation: false' 'audit: true' >"$tmpcfg"
   local result
@@ -613,4 +1184,866 @@ function test_main_sourced_bang_directive() {
   assert_contains "continue" "$result"
   rm -rf "$tmpdir"
   _teardown_mock_env
+}
+
+###
+### enhance_load_settings
+###
+
+function test_load_settings_defaults() {
+  unset _CFG 2>/dev/null || true
+  declare -gA _CFG=()
+  local CONFIG_ORIG="$CONFIG"
+  CONFIG="/nonexistent"
+  enhance_load_settings
+  assert_equals "false" "$DEBUG"
+  assert_equals "true" "$ENABLED"
+  assert_equals "true" "$CORRECTION"
+  assert_equals "haiku" "$CORRECTION_MODEL"
+  assert_equals "false" "$ENHANCEMENT"
+  assert_equals "sonnet" "$ENHANCEMENT_MODEL"
+  assert_equals "false" "$TRANSLATION"
+  assert_equals "haiku" "$TRANSLATION_MODEL"
+  assert_equals "true" "$AUDIT"
+  CONFIG="$CONFIG_ORIG"
+}
+
+function test_load_settings_from_config() {
+  local tmpdir tmpcfg
+  tmpdir=$(mktemp -d)
+  tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
+  printf '%s\n' '---' 'enabled: false' 'debug_mode: true' 'correction: false' 'correction_model: gpt-4' 'enhancement: true' 'enhancement_model: opus' 'translation: true' 'translation_model: deepseek' 'audit: false' >"$tmpcfg"
+  local CONFIG_ORIG="$CONFIG"
+  CONFIG="$tmpcfg"
+  unset _CFG 2>/dev/null || true
+  declare -gA _CFG=()
+  _parse_config
+  enhance_load_settings
+  assert_equals "true" "$DEBUG"
+  assert_equals "false" "$ENABLED"
+  assert_equals "false" "$CORRECTION"
+  assert_equals "gpt-4" "$CORRECTION_MODEL"
+  assert_equals "true" "$ENHANCEMENT"
+  assert_equals "opus" "$ENHANCEMENT_MODEL"
+  assert_equals "true" "$TRANSLATION"
+  assert_equals "deepseek" "$TRANSLATION_MODEL"
+  assert_equals "false" "$AUDIT"
+  rm -rf "$tmpdir"
+  CONFIG="$CONFIG_ORIG"
+}
+
+function test_load_settings_uses_project_dir() {
+  local tmpdir tmpcfg
+  tmpdir=$(mktemp -d)
+  tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
+  printf '%s\n' '---' >"$tmpcfg"
+  local CONFIG_ORIG="$CONFIG"
+  local PROJECT_DIR_ORIG="${CLAUDE_PROJECT_DIR:-}"
+  CONFIG="$tmpcfg"
+  CLAUDE_PROJECT_DIR="$tmpdir"
+  unset _CFG 2>/dev/null || true
+  declare -gA _CFG=()
+  _parse_config
+  enhance_load_settings
+  assert_equals "$tmpdir/.claude/prompts.json" "$AUDIT_LOG"
+  assert_equals "$tmpdir/.claude/.better-prompt-sentinel" "$SENTINEL"
+  assert_equals "$tmpdir/.claude/.better-prompt-enhance-session" "$ENHANCE_SESSION_FILE"
+  rm -rf "$tmpdir"
+  CONFIG="$CONFIG_ORIG"
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR_ORIG"
+}
+
+###
+### enhance_should_skip
+###
+
+function test_should_skip_when_disabled() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "false" "hello" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "disabled" "$result"
+}
+
+function test_should_skip_empty_prompt() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "true" "" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "empty_input" "$result"
+}
+
+function test_should_skip_empty_session() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "true" "hello" "" "/tmp/no-sentinel" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "empty_input" "$result"
+}
+
+function test_should_skip_directive_slash() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "true" "/help" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "directive" "$result"
+}
+
+function test_should_skip_directive_bang() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "true" "!cmd" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "directive" "$result"
+}
+
+function test_should_skip_sentinel_match() {
+  local tmpdir sentinel
+  tmpdir=$(mktemp -d)
+  sentinel="$tmpdir/.better-prompt-sentinel"
+  local _H
+  _H=$(bashunit::temp_file)
+  _md5 "hello world" >"$_H"
+  local hash
+  hash=$(cat "$_H")
+  _atomic_write "$sentinel" "$hash"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "true" "hello world" "ses1" "$sentinel" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "sentinel" "$result"
+  rm -rf "$tmpdir"
+}
+
+function test_should_skip_no_skip_when_enabled() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "true" "hello world" "ses1" "/tmp/no-sentinel-here" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+}
+
+function test_should_skip_no_skip_normal_prompt() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_should_skip "true" "fix this bug" "abc-123" "$tmpdir/no-sentinel" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+  rm -rf "$tmpdir"
+}
+
+###
+### enhance_run_pipeline (no stages)
+###
+
+function test_run_pipeline_all_disabled() {
+  _setup_mock_env
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/.claude"
+  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+
+  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
+  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
+  enhance_run_pipeline "hello world" "false" "haiku" "false" "haiku" "false" "sonnet" "$sess_file"
+
+  assert_equals "hello world" "$CORRECTED_PROMPT"
+  assert_equals "hello world" "$ENHANCED_PROMPT"
+  assert_equals "hello world" "$WORKING_PROMPT"
+
+  rm -rf "$tmpdir"
+  _teardown_mock_env
+}
+
+function test_run_pipeline_correction_enabled() {
+  _setup_mock_env
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/.claude"
+  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+
+  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
+  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
+  enhance_run_pipeline "hallo world" "true" "haiku" "false" "haiku" "false" "sonnet" "$sess_file"
+
+  assert_not_empty "$CORRECTED_PROMPT"
+  assert_not_empty "$WORKING_PROMPT"
+
+  rm -rf "$tmpdir"
+  _teardown_mock_env
+}
+
+function test_run_pipeline_translation_enabled() {
+  _setup_mock_env
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/.claude"
+  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+
+  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
+  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
+  enhance_run_pipeline "bonjour le monde" "false" "haiku" "true" "haiku" "false" "sonnet" "$sess_file"
+
+  assert_not_empty "$WORKING_PROMPT"
+
+  rm -rf "$tmpdir"
+  _teardown_mock_env
+}
+
+function test_run_pipeline_enhancement_enabled() {
+  _setup_mock_env
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/.claude"
+  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+
+  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
+  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
+  enhance_run_pipeline "hello world" "false" "haiku" "false" "haiku" "true" "sonnet" "$sess_file"
+
+  assert_not_empty "$ENHANCED_PROMPT"
+
+  rm -rf "$tmpdir"
+  _teardown_mock_env
+}
+
+###
+### enhance_finalize
+###
+
+function test_finalize_writes_sentinel_and_response() {
+  _setup_mock_env
+  local tmpdir tmpcfg
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/.claude"
+  tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
+  printf '%s\n' '---' 'enabled: true' 'debug_mode: false' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
+
+  local CONFIG_ORIG="$CONFIG"
+  CONFIG="$tmpcfg"
+  local PROJECT_DIR_ORIG="${CLAUDE_PROJECT_DIR:-}"
+  CLAUDE_PROJECT_DIR="$tmpdir"
+
+  unset _CFG 2>/dev/null || true
+  declare -gA _CFG=()
+  _parse_config
+  enhance_load_settings
+
+  WORKING_PROMPT="hello world"
+  CORRECTED_PROMPT="hello world"
+  ENHANCED_PROMPT="enhanced hello"
+  CORRECTIONS_JSON="[]"
+  MISTAKE_NATURE_JSON="[]"
+  CORRECTION="false"
+  CORRECTION_MODEL="haiku"
+  ENHANCEMENT="false"
+  ENHANCEMENT_MODEL="sonnet"
+  TRANSLATION="false"
+  TRANSLATION_MODEL="haiku"
+
+  local sentinel="$tmpdir/.claude/.better-prompt-sentinel"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_finalize "hello world" "test-session-123" >"$_OUT" 2>/dev/null || true
+  local response
+  response=$(cat "$_OUT")
+
+  assert_contains "block" "$response"
+  assert_file_exists "$sentinel"
+
+  rm -rf "$tmpdir"
+  CONFIG="$CONFIG_ORIG"
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR_ORIG"
+  _teardown_mock_env
+}
+
+function test_finalize_writes_audit_when_enabled() {
+  _setup_mock_env
+  local tmpdir tmpcfg
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/.claude"
+  tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
+  printf '%s\n' '---' 'enabled: true' 'debug_mode: false' 'correction: false' 'enhancement: false' 'translation: false' 'audit: true' >"$tmpcfg"
+
+  local CONFIG_ORIG="$CONFIG"
+  CONFIG="$tmpcfg"
+  local PROJECT_DIR_ORIG="${CLAUDE_PROJECT_DIR:-}"
+  CLAUDE_PROJECT_DIR="$tmpdir"
+
+  unset _CFG 2>/dev/null || true
+  declare -gA _CFG=()
+  _parse_config
+  enhance_load_settings
+
+  WORKING_PROMPT="hello world"
+  CORRECTED_PROMPT="hello world"
+  ENHANCED_PROMPT="enhanced hello"
+  CORRECTIONS_JSON="[]"
+  MISTAKE_NATURE_JSON="[]"
+  CORRECTION="false"
+  CORRECTION_MODEL="haiku"
+  ENHANCEMENT="false"
+  ENHANCEMENT_MODEL="sonnet"
+  TRANSLATION="false"
+  TRANSLATION_MODEL="haiku"
+
+  enhance_finalize "hello world" "test-session-456" 2>/dev/null || true
+
+  local audit_log="$tmpdir/.claude/prompts.json"
+  assert_file_exists "$audit_log"
+  local log_content
+  log_content=$(cat "$audit_log")
+  assert_contains "hello world" "$log_content"
+
+  rm -rf "$tmpdir"
+  CONFIG="$CONFIG_ORIG"
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR_ORIG"
+  _teardown_mock_env
+}
+
+###
+### enhance_run_correction (direct call with mock)
+###
+
+function test_run_correction_sets_globals() {
+  _setup_stage_mock_env
+  WORKING_PROMPT=""
+  CORRECTED_PROMPT=""
+  CORRECTIONS_JSON="[]"
+  MISTAKE_NATURE_JSON="[]"
+  enhance_run_correction "hallo world" "haiku"
+  assert_not_empty "$CORRECTED_PROMPT"
+  assert_not_empty "$WORKING_PROMPT"
+  _teardown_mock_env
+}
+
+function test_run_correction_parses_response() {
+  _setup_stage_mock_env
+  WORKING_PROMPT=""
+  CORRECTED_PROMPT=""
+  CORRECTIONS_JSON="[]"
+  MISTAKE_NATURE_JSON="[]"
+  enhance_run_correction "hallo werld" "haiku"
+  assert_contains "corrected" "$CORRECTED_PROMPT"
+  _teardown_mock_env
+}
+
+function test_run_correction_updates_working_prompt() {
+  _setup_stage_mock_env
+  WORKING_PROMPT=""
+  CORRECTED_PROMPT=""
+  CORRECTIONS_JSON="[]"
+  MISTAKE_NATURE_JSON="[]"
+  enhance_run_correction "some prompt" "haiku"
+  assert_equals "$WORKING_PROMPT" "$CORRECTED_PROMPT"
+  _teardown_mock_env
+}
+
+###
+### enhance_run_translation (direct call with mock)
+###
+
+function test_run_translation_sets_working_prompt() {
+  _setup_stage_mock_env
+  WORKING_PROMPT="bonjour le monde"
+  enhance_run_translation "bonjour le monde" "haiku"
+  assert_not_empty "$WORKING_PROMPT"
+  assert_not_equals "bonjour le monde" "$WORKING_PROMPT"
+  _teardown_mock_env
+}
+
+function test_run_translation_keeps_prompt_on_failure() {
+  local mock_dir orig_path
+  mock_dir=$(mktemp -d)
+  orig_path="$PATH"
+  cat >"$mock_dir/claude" <<'MOCK'
+#!/usr/bin/env bash
+echo "error: command failed" >&2
+exit 1
+MOCK
+  chmod +x "$mock_dir/claude"
+  PATH="$mock_dir:$PATH"
+  export PATH
+  WORKING_PROMPT="original prompt"
+  enhance_run_translation "original prompt" "haiku" 2>/dev/null || true
+  assert_equals "original prompt" "$WORKING_PROMPT"
+  PATH="$orig_path"
+  export PATH
+  rm -rf "$mock_dir"
+}
+
+###
+### enhance_run_enhancement_stage (direct call with mock)
+###
+
+function test_run_enhancement_stage_basic() {
+  _setup_stage_mock_env
+  local sess_file
+  sess_file=$(bashunit::temp_file)
+  rm -f "$sess_file"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_run_enhancement_stage "hello world" "sonnet" "$sess_file" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains "enhanced" "$result"
+  _teardown_mock_env
+}
+
+function test_run_enhancement_stage_with_session_file() {
+  _setup_stage_mock_env
+  local sess_dir
+  sess_dir=$(mktemp -d)
+  local sess_file="$sess_dir/.better-prompt-enhance-session"
+  printf '%s' "existing-session-id" >"$sess_file"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_run_enhancement_stage "hello world" "sonnet" "$sess_file" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_not_empty "$result"
+  rm -rf "$sess_dir"
+  _teardown_mock_env
+}
+
+function test_run_enhancement_stage_writes_session() {
+  _setup_stage_mock_env
+  local sess_dir
+  sess_dir=$(mktemp -d)
+  local sess_file="$sess_dir/session"
+  rm -f "$sess_file"
+  enhance_run_enhancement_stage "hello world" "sonnet" "$sess_file" >/dev/null
+  if [[ -f "$sess_file" ]]; then
+    local sid
+    sid=$(cat "$sess_file")
+    assert_not_empty "$sid"
+  fi
+  rm -rf "$sess_dir"
+  _teardown_mock_env
+}
+
+###
+### enhance_write_audit (direct call)
+###
+
+function test_write_audit_creates_file() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "original prompt" "corrected prompt" "enhanced prompt" \
+    "[]" "[]" "true" "haiku" "false" "sonnet" "false" "haiku"
+  assert_file_exists "$audit_log"
+  local content
+  content=$(cat "$audit_log")
+  assert_contains "original prompt" "$content"
+  assert_contains "corrected prompt" "$content"
+  assert_contains "enhanced prompt" "$content"
+  rm -rf "$tmpdir"
+}
+
+function test_write_audit_includes_models() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "prompt" "corr" "enh" \
+    "[]" "[]" "true" "haiku" "false" "sonnet" "false" "haiku"
+  local content
+  content=$(cat "$audit_log")
+  assert_contains "haiku" "$content"
+  rm -rf "$tmpdir"
+}
+
+function test_write_audit_null_models_when_disabled() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "prompt" "corr" "enh" \
+    "[]" "[]" "false" "haiku" "false" "sonnet" "false" "haiku"
+  local content
+  content=$(cat "$audit_log")
+  assert_contains "null" "$content"
+  rm -rf "$tmpdir"
+}
+
+function test_write_audit_appends() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "first" "corr" "enh" \
+    "[]" "[]" "false" "haiku" "false" "sonnet" "false" "haiku"
+  enhance_write_audit "$audit_log" "second" "corr" "enh" \
+    "[]" "[]" "false" "haiku" "false" "sonnet" "false" "haiku"
+  local line_count
+  line_count=$(wc -l <"$audit_log" | tr -d '[:space:]')
+  assert_equals "2" "$line_count"
+  rm -rf "$tmpdir"
+}
+
+###
+### enhance_write_sentinel (direct call)
+###
+
+function test_write_sentinel_creates_file() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local sentinel="$tmpdir/sentinel"
+  enhance_write_sentinel "$sentinel" "test prompt"
+  assert_file_exists "$sentinel"
+  local stored_hash
+  stored_hash=$(cat "$sentinel")
+  assert_not_empty "$stored_hash"
+  rm -rf "$tmpdir"
+}
+
+function test_write_sentinel_stores_correct_hash() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local sentinel="$tmpdir/sentinel"
+  enhance_write_sentinel "$sentinel" "hello world"
+  local _H
+  _H=$(bashunit::temp_file)
+  _md5 "hello world" >"$_H"
+  local expected_hash
+  expected_hash=$(cat "$_H")
+  local stored_hash
+  stored_hash=$(cat "$sentinel")
+  assert_equals "$expected_hash" "$stored_hash"
+  rm -rf "$tmpdir"
+}
+
+function test_write_sentinel_overwrites_existing() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local sentinel="$tmpdir/sentinel"
+  enhance_write_sentinel "$sentinel" "first prompt"
+  enhance_write_sentinel "$sentinel" "second prompt"
+  local _H
+  _H=$(bashunit::temp_file)
+  _md5 "second prompt" >"$_H"
+  local expected_hash
+  expected_hash=$(cat "$_H")
+  local stored_hash
+  stored_hash=$(cat "$sentinel")
+  assert_equals "$expected_hash" "$stored_hash"
+  rm -rf "$tmpdir"
+}
+
+###
+### enhance_format_response (additional branches)
+###
+
+function test_format_response_normal_contains_block() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_format_response "false" "orig" "corr" "trans" "enh" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains '"decision": "block"' "$result" || assert_contains '"decision":"block"' "$result"
+  assert_contains "suppressOutput" "$result"
+}
+
+function test_format_response_debug_shows_labels() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_format_response "true" "orig" "corr" "trans" "enh" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains "Original:" "$result"
+  assert_contains "Corrected:" "$result"
+  assert_contains "Translated:" "$result"
+  assert_contains "Enhanced:" "$result"
+}
+
+###
+### enhance_write_audit (additional branches)
+###
+
+function test_write_audit_with_correction_true() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "true" "haiku" "false" "sonnet" "false" "haiku"
+  local content
+  content=$(cat "$audit_log")
+  assert_contains "haiku" "$content"
+  rm -rf "$tmpdir"
+}
+
+function test_write_audit_with_enhancement_true() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "false" "haiku" "true" "sonnet" "false" "haiku"
+  local content
+  content=$(cat "$audit_log")
+  assert_contains "sonnet" "$content"
+  rm -rf "$tmpdir"
+}
+
+function test_write_audit_with_translation_true() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "false" "haiku" "false" "sonnet" "true" "haiku"
+  local content
+  content=$(cat "$audit_log")
+  assert_contains "haiku" "$content"
+  rm -rf "$tmpdir"
+}
+
+function test_write_audit_with_mistakes() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local audit_log="$tmpdir/.claude/prompts.json"
+  enhance_write_audit "$audit_log" "prompt" "corr" "enh" '["grammar"]' '[{"type":"grammar","correction":"fix"}]' "true" "haiku" "false" "sonnet" "false" "haiku"
+  local content
+  content=$(cat "$audit_log")
+  assert_contains "grammar" "$content"
+  rm -rf "$tmpdir"
+}
+
+###
+### enhance_copy_to_clipboard (additional branches)
+###
+
+function test_copy_to_clipboard_linux_xclip() {
+  if [[ "$_IS_MACOS" == true ]]; then
+    assert_successful_code
+    return 0
+  fi
+  local mock_dir orig_path
+  mock_dir=$(mktemp -d)
+  orig_path="$PATH"
+  cat >"$mock_dir/xclip" <<'MOCK'
+#!/usr/bin/env bash
+cat > /tmp/better-prompt-test-clip-xclip
+MOCK
+  chmod +x "$mock_dir/xclip"
+  cat >"$mock_dir/xsel" <<'MOCK'
+#!/usr/bin/env bash
+echo "xsel should not be called"
+MOCK
+  chmod +x "$mock_dir/xsel"
+  PATH="$mock_dir:$PATH"
+  enhance_copy_to_clipboard "test xclip content"
+  local content
+  content=$(cat /tmp/better-prompt-test-clip-xclip 2>/dev/null || echo "")
+  assert_equals "test xclip content" "$content"
+  PATH="$orig_path"
+  export PATH
+  rm -rf "$mock_dir" /tmp/better-prompt-test-clip-xclip
+}
+
+function test_copy_to_clipboard_linux_xsel() {
+  if [[ "$_IS_MACOS" == true ]]; then
+    assert_successful_code
+    return 0
+  fi
+  local mock_dir orig_path
+  mock_dir=$(mktemp -d)
+  orig_path="$PATH"
+  # No xclip, only xsel
+  cat >"$mock_dir/xsel" <<'MOCK'
+#!/usr/bin/env bash
+cat > /tmp/better-prompt-test-clip-xsel
+MOCK
+  chmod +x "$mock_dir/xsel"
+  PATH="$mock_dir:$PATH"
+  enhance_copy_to_clipboard "test xsel content"
+  local content
+  content=$(cat /tmp/better-prompt-test-clip-xsel 2>/dev/null || echo "")
+  assert_equals "test xsel content" "$content"
+  PATH="$orig_path"
+  export PATH
+  rm -rf "$mock_dir" /tmp/better-prompt-test-clip-xsel
+}
+
+function test_copy_to_clipboard_no_utility_linux() {
+  if [[ "$_IS_MACOS" == true ]]; then
+    assert_successful_code
+    return 0
+  fi
+  local mock_dir orig_path
+  mock_dir=$(mktemp -d)
+  orig_path="$PATH"
+  PATH="$mock_dir"
+  export PATH
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance_copy_to_clipboard "test content" 2>"$_OUT"
+  local stderr_content
+  stderr_content=$(cat "$_OUT")
+  assert_contains "clipboard" "$stderr_content"
+  PATH="$orig_path"
+  export PATH
+  rm -rf "$mock_dir"
+}
+
+###
+### enhance_spawn_stop_hook (direct call with mock)
+###
+
+function test_spawn_stop_hook_sets_environment() {
+  local mock_dir orig_path
+  mock_dir=$(mktemp -d)
+  orig_path="$PATH"
+  cat >"$mock_dir/nohup" <<'MOCK'
+#!/usr/bin/env bash
+echo "CALLED" >> /tmp/better-prompt-test-spawn-env
+env >> /tmp/better-prompt-test-spawn-env
+MOCK
+  chmod +x "$mock_dir/nohup"
+  cat >"$mock_dir/bash" <<'MOCK'
+#!/usr/bin/env bash
+echo "BASH_CALLED" >> /tmp/better-prompt-test-spawn-env
+MOCK
+  chmod +x "$mock_dir/bash"
+  cat >"$mock_dir/pbcopy" <<'MOCK'
+#!/usr/bin/env bash
+cat > /dev/null
+MOCK
+  chmod +x "$mock_dir/pbcopy"
+  PATH="$mock_dir:$PATH"
+  export PATH
+  rm -f /tmp/better-prompt-test-spawn-env
+  enhance_spawn_stop_hook "test-session-xyz"
+  sleep 1
+  assert_successful_code
+  PATH="$orig_path"
+  export PATH
+  rm -rf "$mock_dir" /tmp/better-prompt-test-spawn-env
+}
+
+###
+### enhance_write_sentinel (additional branch)
+###
+
+function test_write_sentinel_warns_on_empty_hash() {
+  local tmpdir sentinel
+  tmpdir=$(mktemp -d)
+  sentinel="$tmpdir/.better-prompt-sentinel"
+  local _ERR
+  _ERR=$(bashunit::temp_file)
+  _md5() {
+    printf ''
+    return 0
+  }
+  enhance_write_sentinel "$sentinel" "test prompt" 2>"$_ERR"
+  local stderr_content
+  stderr_content=$(cat "$_ERR")
+  assert_contains "sentinel" "$stderr_content"
+  [[ ! -f "$sentinel" ]]
+  assert_successful_code
+  rm -rf "$tmpdir"
+}
+
+###
+### _json_escape sed fallback (without jq)
+###
+
+function test_json_escape_without_jq_direct() {
+  local orig_path="$PATH"
+  PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '/jq$' | grep -v '/jq/' | tr '\n' ':')
+  export PATH
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _json_escape 'hello "world"' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_contains "hello" "$result"
+  assert_contains "world" "$result"
+  PATH="$orig_path"
+  export PATH
+}
+
+###
+### enhance_resolve_session_id (directory lookup)
+###
+
+function test_resolve_session_id_from_directory_macos() {
+  if [[ "$_IS_MACOS" != true ]]; then
+    return 0
+  fi
+  local tmpdir session_dir
+  tmpdir=$(mktemp -d)
+  session_dir="$tmpdir/.claude/session-env"
+  mkdir -p "$session_dir/active-session-1"
+  local orig_home="$HOME"
+  HOME="$tmpdir"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  local orig_sid="$CLAUDE_SESSION_ID"
+  CLAUDE_SESSION_ID=""
+  enhance_resolve_session_id "" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_not_empty "$result"
+  HOME="$orig_home"
+  CLAUDE_SESSION_ID="$orig_sid"
+  rm -rf "$tmpdir"
+}
+
+function test_resolve_session_id_empty_directory() {
+  local tmpdir session_dir
+  tmpdir=$(mktemp -d)
+  session_dir="$tmpdir/.claude/session-env"
+  mkdir -p "$session_dir"
+  local orig_home="$HOME"
+  HOME="$tmpdir"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  local orig_sid="$CLAUDE_SESSION_ID"
+  CLAUDE_SESSION_ID=""
+  enhance_resolve_session_id "" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
+  HOME="$orig_home"
+  CLAUDE_SESSION_ID="$orig_sid"
+  rm -rf "$tmpdir"
+}
+
+function test_resolve_session_id_with_alphanumeric() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  CLAUDE_SESSION_ID="" enhance_resolve_session_id '{"session_id":"abc123_def-456"}' >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "abc123_def-456" "$result"
+}
+
+###
+### _read_stdin_payload (direct call)
+###
+
+function test_read_stdin_payload_direct() {
+  local input_file output_file
+  input_file=$(bashunit::temp_file)
+  output_file=$(bashunit::temp_file)
+  printf '%s' '{"key":"value"}' >"$input_file"
+  _read_stdin_payload <"$input_file" >"$output_file"
+  local result
+  result=$(cat "$output_file")
+  assert_equals '{"key":"value"}' "$result"
+}
+
+function test_read_stdin_payload_empty_direct() {
+  local input_file output_file
+  input_file=$(bashunit::temp_file)
+  output_file=$(bashunit::temp_file)
+  : >"$input_file"
+  _read_stdin_payload <"$input_file" >"$output_file"
+  local result
+  result=$(cat "$output_file")
+  assert_empty "$result"
 }
