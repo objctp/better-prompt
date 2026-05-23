@@ -1,453 +1,476 @@
 #!/usr/bin/env bash
-# hooks/scripts/enhance.sh
-# Invoked by UserPromptSubmit hook (type: command)
-# Reads ~/.claude/better-prompt.local.md for all settings
-
+#
+# Enhance user prompts via correction, translation, and enhancement stages
+# Usage: enhance.sh < stdin-payload
+#
 set -euo pipefail
 
-# ── Read stdin payload immediately — must happen before any subshell consumes it ──
-# UserPromptSubmit delivers: { "prompt": "...", "session_id": "...", ... }
-STDIN_PAYLOAD=""
-if [ ! -t 0 ]; then
-  STDIN_PAYLOAD=$(cat)
+###
+### :::: Constants and Globals :::: ####
+###
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
+
+if [[ -z "${_IS_MACOS:-}" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    _IS_MACOS=true
+  else
+    _IS_MACOS=false
+  fi
 fi
 
-# ── Early environment (needed by helpers before config is fully parsed) ───────
-ORIGINAL_PROMPT=$(printf '%s' "$STDIN_PAYLOAD" | jq -r '.prompt // empty' 2>/dev/null || true)
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
-CONFIG="$HOME/.claude/better-prompt.local.md"
+###
+### :::: Private Functions :::: ########
+###
 
-# Bootstrap DEBUG from config immediately so debug() works from the first call.
-# Full config parsing happens in section 1; this is a lightweight early read.
-_bootstrap_debug() {
-  if [ ! -f "$CONFIG" ]; then
-    printf 'false'
-    return
-  fi
-  awk '/^---$/{count++; next} count==1 && /^debug_mode:/{
-		sub(/^debug_mode:[[:space:]]*/,""); sub(/#.*$/,"")
-		gsub(/^[[:space:]]+|[[:space:]]+$/,""); print; exit
-	} count>=2{exit}' "$CONFIG"
-}
-DEBUG=$(_bootstrap_debug)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 0. Helper functions
-# ═════════════════════════════════════════════════════════════════════════════
-
-# Log warning to stderr
-warn() {
+_warn() {
   printf '[better-prompt] WARNING: %s\n' "$*" >&2
+  return 0
 }
 
-# Log debug message to stderr (only when DEBUG=true)
-debug() {
-  if [ "$DEBUG" = "true" ]; then
+_debug() {
+  if [[ "${DEBUG:-false}" == "true" ]]; then
     printf '[better-prompt] DEBUG: %s\n' "$*" >&2
   fi
+  return 0
 }
 
-# Properly escape string for JSON using jq
-json_escape() {
+_json_escape() {
+  local input="$1"
   if command -v jq &>/dev/null; then
-    printf '%s' "$1" | jq -Rs .
+    printf '%s' "$input" | jq -Rs .
   else
-    # Fallback: minimal escaping if jq unavailable
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+    printf '%s' "$input" | sed 's/\\/\\\\/g; s/"/\\"/g'
   fi
+  return 0
 }
 
-# Detect OS type for platform-specific commands
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  _IS_MACOS=true
-else
-  _IS_MACOS=false
-fi
+_atomic_write() {
+  local target="$1" content="$2"
+  local tmp
+  tmp=$(mktemp "${target}.XXXXXX") || return 1
+  # Temp + rename prevents partial reads from concurrent processes
+  printf '%s' "$content" >"$tmp" && mv -f "$tmp" "$target"
+  return 0
+}
 
-# ── Sentinel path — project-scoped, session-ID-independent ───────────────────
-# Set here so any early-exit trap can clean up if needed.
-# The actual sentinel file stores the hash of the enhanced prompt; it is
-# written in section 7.5 (after FINAL_PROMPT is known) and checked below.
-SENTINEL="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-sentinel"
+_md5() {
+  # macOS `md5` prints only the digest; GNU `md5sum` appends the filename
+  printf '%s' "$1" | (md5 2>/dev/null || md5sum 2>/dev/null | cut -c1-32)
+  return 0
+}
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 1. Parse config
-# Reads a key from the YAML frontmatter of better-prompt.local.md.
-# Strips inline comments (# ...) and surrounding whitespace.
-# Falls back to $2 (default) if the file or key is missing.
-# ═════════════════════════════════════════════════════════════════════════════
-get_setting() {
+_get_setting() {
   local key="$1"
   local default="$2"
-
-  if [ ! -f "$CONFIG" ]; then
-    printf '%s' "$default"
-    return
-  fi
-
-  local value
-  value=$(awk -v key="$key" '
-        /^---$/ { count++; next }
-        count == 1 {
-            if (match($0, "^" key ":")) {
-                sub("^" key ":[[:space:]]*", "")
-                sub(/#.*$/, "")
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-                print
-                exit
-            }
-        }
-        count >= 2 { exit }
-    ' "$CONFIG")
-
-  printf '%s' "${value:-$default}"
+  printf '%s' "${_CFG[$key]:-$default}" # falls back to $default when key absent
+  return 0
 }
 
-ENABLED=$(get_setting "enabled" "true")
-CORRECTION=$(get_setting "correction" "true")
-CORRECTION_MODEL=$(get_setting "correction_model" "haiku")
-ENHANCEMENT=$(get_setting "enhancement" "false")
-ENHANCEMENT_MODEL=$(get_setting "enhancement_model" "sonnet")
-TRANSLATION=$(get_setting "translation" "false")
-TRANSLATION_MODEL=$(get_setting "translation_model" "haiku")
-AUDIT=$(get_setting "audit" "true")
-DEBUG=$(get_setting "debug_mode" "false")
-AUDIT_LOG="${CLAUDE_PROJECT_DIR:-.}/.claude/prompts.json"
+_parse_config() {
+  if [[ ! -f "$CONFIG" ]]; then
+    return 0
+  fi
+  local key val in_front=0
+  while IFS= read -r line; do
+    if [[ "$line" == "---" ]]; then
+      ((++in_front))
+      continue
+    fi
+    [[ "$in_front" -eq 1 ]] || continue
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    key="${line%%:*}"
+    val="${line#*:}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    _CFG["$key"]="$val"
+  done <"$CONFIG"
+  return 0
+}
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 2. Global kill switch
-# ═════════════════════════════════════════════════════════════════════════════
-if [ "$ENABLED" = "false" ]; then
-  printf '{"continue": true}\n'
-  exit 0
-fi
+_read_stdin_payload() {
+  # Must run before any subshell consumes stdin
+  # Payload format: { "prompt": "...", "session_id": "...", ... }
+  local payload=""
+  if [[ ! -t 0 ]]; then
+    payload=$(cat)
+  fi
+  printf '%s' "$payload"
+  return 0
+}
 
-# ── Resolve session ID ────────────────────────────────────────────────────────
-# Try stdin JSON input first, then env var, then most recent session-env entry
-# Validate session ID format (UUID-like pattern)
-SESSION_ID=""
-
-# Parse session_id from the stdin payload captured at startup
-if [ -n "$STDIN_PAYLOAD" ] && command -v jq &>/dev/null; then
-  SESSION_ID=$(printf '%s' "$STDIN_PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
-fi
-
-# Fall back to environment variable
-if [ -z "$SESSION_ID" ] && [ -n "${CLAUDE_SESSION_ID:-}" ]; then
-  SESSION_ID="$CLAUDE_SESSION_ID"
-fi
-
-# Fall back to finding most recent session file
-if [ -z "$SESSION_ID" ]; then
-  SESSION_DIR="$HOME/.claude/session-env/"
-  if [ -d "$SESSION_DIR" ]; then
-    if [ "$_IS_MACOS" = true ]; then
-      # macOS/BSD: stat -f '%m %N' gives mtime + full path; extract filename only
-      SESSION_ID=$(find "$SESSION_DIR" -mindepth 1 -maxdepth 1 -type d -exec stat -f '%m %N' {} \; 2>/dev/null |
-        sort -rn | head -1 | awk '{print $NF}' | xargs basename) || {
-        warn "Failed to find session ID on macOS"
-        SESSION_ID=""
-      }
-    else
-      # GNU find: use -printf for efficiency
-      SESSION_ID=$(find "$SESSION_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' 2>/dev/null |
-        sort -rn | head -1 | cut -d' ' -f2-) || {
-        warn "Failed to find session ID"
-        SESSION_ID=""
-      }
+_run_enhance() {
+  local resume_args=()
+  if [[ -f "$ENHANCE_SESSION_FILE" ]]; then
+    local stored_id
+    stored_id=$(cat "$ENHANCE_SESSION_FILE" 2>/dev/null || true)
+    if [[ -n "$stored_id" ]]; then
+      resume_args=(--resume "$stored_id")
+      _debug "Resuming enhancement session: $stored_id"
     fi
   fi
-fi
 
-# Validate session ID (basic sanity check - alphanumeric with dashes/underscores)
-if [ -n "$SESSION_ID" ]; then
-  if ! [[ "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    warn "Invalid session ID format: $SESSION_ID"
-    SESSION_ID=""
-  fi
-fi
-
-# ── Bail early if nothing to process ─────────────────────────────────────────
-if [ -z "$ORIGINAL_PROMPT" ] || [ -z "$SESSION_ID" ]; then
-  printf '{"continue": true}\n'
-  exit 0
-fi
-
-# ── Skip slash commands, @ mentions, and ! shell commands ────────────────────────────
-# These are Claude Code UI directives, not natural-language prompts.
-if [[ "$ORIGINAL_PROMPT" =~ ^[/!] ]]; then
-  printf '{"continue": true}\n'
-  exit 0
-fi
-
-# ── Sentinel: pass through our own re-fired enhanced prompt ──────────────────
-# The sentinel is a project-scoped file whose CONTENT is the md5 hash of the
-# enhanced prompt.  Keying on content (not session ID) means the guard survives
-# conversation rewinds, which cause Claude Code to issue a fresh session ID for
-# the subsequent UserPromptSubmit event — the original session-keyed sentinel
-# was invisible to that new ID, allowing the loop to occur.
-#
-# Flow:
-#   first run  → hash of ENHANCED_PROMPT written to $SENTINEL  (section 7.5)
-#   second run → hash of incoming prompt compared to stored hash → bypass if match
-
-# Portable md5: macOS `md5` prints just the digest; GNU `md5sum` appends filename.
-_md5() { md5 2>/dev/null <<<"$1" || printf '%s' "$1" | md5sum 2>/dev/null | cut -c1-32; }
-
-if [ -f "$SENTINEL" ]; then
-  SENTINEL_AGE=$(($(date +%s) - $(stat -f '%m' "$SENTINEL" 2>/dev/null ||
-    stat -c '%Y' "$SENTINEL" 2>/dev/null || echo 0)))
-  if [ "$SENTINEL_AGE" -lt 60 ]; then
-    STORED_HASH=$(cat "$SENTINEL" 2>/dev/null || echo "")
-    INCOMING_HASH=$(_md5 "$ORIGINAL_PROMPT")
-    if [ -n "$STORED_HASH" ] && [ "$INCOMING_HASH" = "$STORED_HASH" ]; then
-      debug "Sentinel matched (${SENTINEL_AGE}s old, hash=${INCOMING_HASH}) — passing re-fired prompt through"
-      rm -f "$SENTINEL"
-      printf '{"continue": true}\n'
-      exit 0
-    else
-      debug "Sentinel present but hash mismatch — new prompt, proceeding (stored=${STORED_HASH:-empty}, incoming=${INCOMING_HASH})"
-    fi
-  else
-    debug "Stale sentinel (${SENTINEL_AGE}s old) — removing"
-    rm -f "$SENTINEL"
-  fi
-fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 3. Correction stage
-# Fixes grammar and spelling only. Punctuation is NOT classified as a mistake.
-# Returns JSON: { "corrected": "...", "mistakes": [...] }
-# ═════════════════════════════════════════════════════════════════════════════
-WORKING_PROMPT="$ORIGINAL_PROMPT"
-CORRECTIONS_JSON="[]"
-MISTAKE_NATURE_JSON="[]"
-
-if [ "$CORRECTION" = "true" ]; then
-  debug "Running correction with model: $CORRECTION_MODEL"
-
-  CORRECTION_RESULT=$(claude -p \
-    --agent better-prompt:prompt-correction \
-    --model "$CORRECTION_MODEL" \
-    "Correct the following prompt in terms of grammar and make it clear in context. Return ONLY the raw JSON object — no markdown, no code blocks.
-
-Prompt: $WORKING_PROMPT" 2>&1) || {
-    warn "Correction stage failed: $CORRECTION_RESULT"
-    CORRECTION_RESULT=""
-  }
-
-  if [ -n "$CORRECTION_RESULT" ] && command -v jq &>/dev/null; then
-    # Strip markdown code fences if the model wrapped its output despite instructions
-    CORRECTION_RESULT=$(printf '%s' "$CORRECTION_RESULT" | sed 's/^```[a-zA-Z]*$//' | sed 's/^```$//' | sed '/^[[:space:]]*$/d' | tr -d '\r')
-
-    CORRECTED=$(printf '%s' "$CORRECTION_RESULT" | jq -r '.corrected // empty' 2>/dev/null || true)
-    CORRECTIONS_JSON=$(printf '%s' "$CORRECTION_RESULT" | jq -c '.mistakes // []' 2>/dev/null || echo "[]")
-
-    [ -n "$CORRECTED" ] && WORKING_PROMPT="$CORRECTED"
-
-    # Build mistake-nature: unique types from whatever the agent classified
-    MISTAKE_NATURE_JSON=$(printf '%s' "$CORRECTIONS_JSON" |
-      jq -c '[.[].type] | unique' \
-        2>/dev/null || echo "[]")
-  fi
-fi
-
-# Snapshot post-correction state before translation may overwrite WORKING_PROMPT.
-CORRECTED_PROMPT="$WORKING_PROMPT"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 4. Translation stage
-# Translates non-English prompts to English. If the prompt is already in
-# English, the agent passes it through unchanged. Returns plain text only.
-# ═════════════════════════════════════════════════════════════════════════════
-if [ "$TRANSLATION" = "true" ]; then
-  debug "Running translation with model: $TRANSLATION_MODEL"
-
-  TRANSLATION_RESULT=$(claude -p \
-    --agent better-prompt:prompt-translation \
-    --model "$TRANSLATION_MODEL" \
-    "$WORKING_PROMPT" 2>&1) || {
-    warn "Translation stage failed: $TRANSLATION_RESULT"
-    TRANSLATION_RESULT=""
-  }
-
-  [ -n "$TRANSLATION_RESULT" ] && WORKING_PROMPT="$TRANSLATION_RESULT"
-fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 5. Enhancement stage
-# Uses --resume to maintain a persistent session so the model sees
-# previously enhanced prompts as context — without needing the user's
-# original conversation history.
-# ═════════════════════════════════════════════════════════════════════════════
-ENHANCED_PROMPT="$WORKING_PROMPT"
-ENHANCE_SESSION_FILE="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-enhance-session"
-
-if [ "$ENHANCEMENT" = "true" ]; then
-  debug "Running enhancement with model: $ENHANCEMENT_MODEL"
-
-  _run_enhance() {
-    local resume_args=()
-    if [ -f "$ENHANCE_SESSION_FILE" ]; then
-      local stored_id
-      stored_id=$(cat "$ENHANCE_SESSION_FILE" 2>/dev/null || true)
-      if [ -n "$stored_id" ]; then
-        resume_args=(--resume "$stored_id")
-        debug "Resuming enhancement session: $stored_id"
-      fi
-    fi
-
-    claude -p \
-      "${resume_args[@]}" \
-      --output-format json \
-      --agent better-prompt:prompt-enhancement \
-      --model "$ENHANCEMENT_MODEL" \
-      "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
+  claude -p \
+    "${resume_args[@]}" \
+    --output-format json \
+    --agent better-prompt:prompt-enhancement \
+    --model "$ENHANCEMENT_MODEL" \
+    "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
 
 Prompt:
 $WORKING_PROMPT" 2>&1
-  }
+  return 0
+}
 
-  ENHANCE_JSON=$(_run_enhance) || {
-    # Resume failed — session may have expired. Retry without --resume.
-    if [ -f "$ENHANCE_SESSION_FILE" ]; then
-      debug "Resume failed, retrying without session"
-      rm -f "$ENHANCE_SESSION_FILE"
-      ENHANCE_JSON=$(claude -p \
-        --output-format json \
-        --agent better-prompt:prompt-enhancement \
-        --model "$ENHANCEMENT_MODEL" \
-        "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
+###
+### :::: Main :::: #####################
+###
+
+main() {
+  local STDIN_PAYLOAD ORIGINAL_PROMPT
+  STDIN_PAYLOAD=$(_read_stdin_payload)
+  ORIGINAL_PROMPT=$(printf '%s' "$STDIN_PAYLOAD" | jq -r '.prompt // empty' 2>/dev/null || true)
+
+  local SENTINEL="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-sentinel" # project-scoped, survives rewinds
+
+  declare -A _CFG=()
+  _parse_config
+
+  local DEBUG # bootstrap early so _debug() works on first call
+  DEBUG=$(_get_setting "debug_mode" "false")
+
+  local ENABLED CORRECTION CORRECTION_MODEL
+  local ENHANCEMENT ENHANCEMENT_MODEL
+  local TRANSLATION TRANSLATION_MODEL
+  local AUDIT AUDIT_LOG
+  ENABLED=$(_get_setting "enabled" "true")
+  CORRECTION=$(_get_setting "correction" "true")
+  CORRECTION_MODEL=$(_get_setting "correction_model" "haiku")
+  ENHANCEMENT=$(_get_setting "enhancement" "false")
+  ENHANCEMENT_MODEL=$(_get_setting "enhancement_model" "sonnet")
+  TRANSLATION=$(_get_setting "translation" "false")
+  TRANSLATION_MODEL=$(_get_setting "translation_model" "haiku")
+  AUDIT=$(_get_setting "audit" "true")
+  AUDIT_LOG="${CLAUDE_PROJECT_DIR:-.}/.claude/prompts.json"
+
+  ###
+  ### :::: Global Kill Switch :::: #######
+  ###
+
+  if [[ "$ENABLED" == "false" ]]; then
+    printf '{"continue": true}\n'
+    exit 0
+  fi
+
+  ###
+  ### :::: Resolve Session ID :::: ######
+  ###
+
+  local SESSION_ID="" # stdin → env → most-recent session file
+
+  if [[ -n "$STDIN_PAYLOAD" ]] && command -v jq &>/dev/null; then
+    SESSION_ID=$(printf '%s' "$STDIN_PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
+  fi
+
+  if [[ -z "$SESSION_ID" ]] && [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+    SESSION_ID="$CLAUDE_SESSION_ID"
+  fi
+
+  if [[ -z "$SESSION_ID" ]]; then
+    local SESSION_DIR="$HOME/.claude/session-env/"
+    if [[ -d "$SESSION_DIR" ]]; then
+      if [[ "$_IS_MACOS" == true ]]; then
+        SESSION_ID=$(find "$SESSION_DIR" -mindepth 1 -maxdepth 1 -type d \
+          -exec stat -f '%m %N' {} \; 2>/dev/null |
+          sort -rn | head -1 | awk '{print $NF}' | xargs basename) || {
+          _warn "Failed to find session ID on macOS"
+          SESSION_ID=""
+        }
+      else
+        SESSION_ID=$(find "$SESSION_DIR" -mindepth 1 -maxdepth 1 -type d \
+          -printf '%T@ %f\n' 2>/dev/null |
+          sort -rn | head -1 | cut -d' ' -f2-) || {
+          _warn "Failed to find session ID"
+          SESSION_ID=""
+        }
+      fi
+    fi
+  fi
+
+  if [[ -n "$SESSION_ID" ]]; then
+    if ! [[ "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+      _warn "Invalid session ID format: $SESSION_ID"
+      SESSION_ID=""
+    fi
+  fi
+
+  ###
+  ### :::: Early Exit :::: ##############
+  ###
+
+  if [[ -z "$ORIGINAL_PROMPT" ]] || [[ -z "$SESSION_ID" ]]; then
+    printf '{"continue": true}\n'
+    exit 0
+  fi
+
+  if [[ "$ORIGINAL_PROMPT" =~ ^[/!] ]]; then # Claude Code UI directives, not natural language
+    printf '{"continue": true}\n'
+    exit 0
+  fi
+
+  ###
+  ### :::: Sentinel Loop Guard :::: ######
+  ###
+
+  # Content-based hash (not session ID) so the guard survives rewinds,
+  # which assign a fresh session ID and would otherwise reprocess the prompt.
+  #
+  #   first run  → write hash of ENHANCED_PROMPT to $SENTINEL
+  #   second run → compare incoming hash → bypass on match
+  if [[ -f "$SENTINEL" ]]; then
+    local SENTINEL_AGE
+    SENTINEL_AGE=$(($(date +%s) - $(stat -f '%m' "$SENTINEL" 2>/dev/null ||
+      stat -c '%Y' "$SENTINEL" 2>/dev/null || echo 0)))
+    if [[ "$SENTINEL_AGE" -lt 60 ]]; then
+      local STORED_HASH INCOMING_HASH
+      STORED_HASH=$(cat "$SENTINEL" 2>/dev/null || echo "")
+      INCOMING_HASH=$(_md5 "$ORIGINAL_PROMPT")
+      if [[ -n "$STORED_HASH" ]] && [[ "$INCOMING_HASH" == "$STORED_HASH" ]]; then
+        _debug "Sentinel matched (${SENTINEL_AGE}s old, hash=${INCOMING_HASH}) — passing re-fired prompt through"
+        rm -f "$SENTINEL"
+        printf '{"continue": true}\n'
+        exit 0
+      else
+        _debug "Sentinel present but hash mismatch — new prompt, proceeding (stored=${STORED_HASH:-empty}, incoming=${INCOMING_HASH})"
+      fi
+    else
+      _debug "Stale sentinel (${SENTINEL_AGE}s old) — removing"
+      rm -f "$SENTINEL"
+    fi
+  fi
+
+  ###
+  ### :::: Correction Stage :::: ########
+  ###
+
+  # Punctuation is NOT classified as a mistake.
+  # Returns: { "corrected": "...", "mistakes": [...] }
+  local WORKING_PROMPT="$ORIGINAL_PROMPT"
+  local CORRECTIONS_JSON="[]"
+  local MISTAKE_NATURE_JSON="[]"
+  local CORRECTED_PROMPT="$ORIGINAL_PROMPT"
+
+  if [[ "$CORRECTION" == "true" ]]; then
+    _debug "Running correction with model: $CORRECTION_MODEL"
+
+    local CORRECTION_RESULT=""
+    CORRECTION_RESULT=$(claude -p \
+      --agent better-prompt:prompt-correction \
+      --model "$CORRECTION_MODEL" \
+      "Correct the following prompt in terms of grammar and make it clear in context. Return ONLY the raw JSON object — no markdown, no code blocks.
+
+Prompt: $WORKING_PROMPT" 2>&1) || {
+      _warn "Correction stage failed: $CORRECTION_RESULT"
+      CORRECTION_RESULT=""
+    }
+
+    if [[ -n "$CORRECTION_RESULT" ]] && command -v jq &>/dev/null; then
+      CORRECTION_RESULT=$(printf '%s' "$CORRECTION_RESULT" |
+        sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' |
+        tr -d '\r') # strip markdown code fences the model may add despite instructions
+
+      local CORRECTED
+      CORRECTED=$(printf '%s' "$CORRECTION_RESULT" | jq -r '.corrected // empty' 2>/dev/null || true)
+      CORRECTIONS_JSON=$(printf '%s' "$CORRECTION_RESULT" | jq -c '.mistakes // []' 2>/dev/null || echo "[]")
+
+      [[ -n "$CORRECTED" ]] && WORKING_PROMPT="$CORRECTED"
+
+      MISTAKE_NATURE_JSON=$(printf '%s' "$CORRECTIONS_JSON" |
+        jq -c '[.[].type] | unique' \
+          2>/dev/null || echo "[]")
+    fi
+  fi
+
+  CORRECTED_PROMPT="$WORKING_PROMPT" # snapshot before translation overwrites WORKING_PROMPT
+
+  ###
+  ### :::: Translation Stage :::: ########
+  ###
+
+  # Already-English prompts are passed through unchanged
+  if [[ "$TRANSLATION" == "true" ]]; then
+    _debug "Running translation with model: $TRANSLATION_MODEL"
+
+    local TRANSLATION_RESULT=""
+    TRANSLATION_RESULT=$(claude -p \
+      --agent better-prompt:prompt-translation \
+      --model "$TRANSLATION_MODEL" \
+      "$WORKING_PROMPT" 2>&1) || {
+      _warn "Translation stage failed: $TRANSLATION_RESULT"
+      TRANSLATION_RESULT=""
+    }
+
+    [[ -n "$TRANSLATION_RESULT" ]] && WORKING_PROMPT="$TRANSLATION_RESULT"
+  fi
+
+  ###
+  ### :::: Enhancement Stage :::: #######
+  ###
+
+  # --resume keeps a persistent session for context across invocations
+  local ENHANCED_PROMPT="$WORKING_PROMPT"
+  local ENHANCE_SESSION_FILE="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-enhance-session"
+
+  if [[ "$ENHANCEMENT" == "true" ]]; then
+    _debug "Running enhancement with model: $ENHANCEMENT_MODEL"
+
+    local ENHANCE_JSON=""
+    ENHANCE_JSON=$(_run_enhance) || {
+      # Session may have expired — retry without --resume
+      if [[ -f "$ENHANCE_SESSION_FILE" ]]; then
+        _debug "Resume failed, retrying without session"
+        rm -f "$ENHANCE_SESSION_FILE"
+        ENHANCE_JSON=$(claude -p \
+          --output-format json \
+          --agent better-prompt:prompt-enhancement \
+          --model "$ENHANCEMENT_MODEL" \
+          "Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
 
 Prompt:
 $WORKING_PROMPT" 2>&1) || {
-        warn "Enhancement stage failed: $ENHANCE_JSON"
+          _warn "Enhancement stage failed: $ENHANCE_JSON"
+          ENHANCE_JSON=""
+        }
+      else
+        _warn "Enhancement stage failed: $ENHANCE_JSON"
         ENHANCE_JSON=""
-      }
+      fi
+    }
+
+    local ENHANCED_RESULT=""
+    if [[ -n "$ENHANCE_JSON" ]] && command -v jq &>/dev/null; then
+      ENHANCED_RESULT=$(printf '%s' "$ENHANCE_JSON" | jq -r '.result // empty' 2>/dev/null || true)
+      local ENHANCE_SID
+      ENHANCE_SID=$(printf '%s' "$ENHANCE_JSON" | jq -r '.session_id // empty' 2>/dev/null || true)
+      [[ -n "$ENHANCE_SID" ]] && _atomic_write "$ENHANCE_SESSION_FILE" "$ENHANCE_SID"
     else
-      warn "Enhancement stage failed: $ENHANCE_JSON"
-      ENHANCE_JSON=""
+      ENHANCED_RESULT="$ENHANCE_JSON"
     fi
-  }
 
-  if [ -n "$ENHANCE_JSON" ] && command -v jq &>/dev/null; then
-    ENHANCED_RESULT=$(printf '%s' "$ENHANCE_JSON" | jq -r '.result // empty' 2>/dev/null || true)
-    ENHANCE_SID=$(printf '%s' "$ENHANCE_JSON" | jq -r '.session_id // empty' 2>/dev/null || true)
-    [ -n "$ENHANCE_SID" ] && printf '%s' "$ENHANCE_SID" >"$ENHANCE_SESSION_FILE"
-  else
-    ENHANCED_RESULT="$ENHANCE_JSON"
+    ENHANCED_PROMPT="$ENHANCED_RESULT"
+    [[ -z "$ENHANCED_PROMPT" ]] && ENHANCED_PROMPT="$WORKING_PROMPT"
   fi
 
-  ENHANCED_PROMPT="$ENHANCED_RESULT"
-  [ -z "$ENHANCED_PROMPT" ] && ENHANCED_PROMPT="$WORKING_PROMPT"
-fi
+  ###
+  ### :::: Audit Log :::: ###############
+  ###
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 6. Audit log
-# Appends one NDJSON line per invocation to the configured path.
-# Runs before output so the record exists even if the output step fails.
-# ═════════════════════════════════════════════════════════════════════════════
-if [ "$AUDIT" = "true" ] && command -v jq &>/dev/null; then
-  mkdir -p "$(dirname "$AUDIT_LOG")"
+  if [[ "$AUDIT" == "true" ]] && command -v jq &>/dev/null; then
+    mkdir -p "$(dirname "$AUDIT_LOG")"
 
-  # Record null for a model when its stage was disabled, so the log
-  # accurately reflects what actually ran rather than what is configured.
-  AUDIT_CORRECTION_MODEL="null"
-  AUDIT_ENHANCEMENT_MODEL="null"
-  AUDIT_TRANSLATION_MODEL="null"
-  [ "$CORRECTION" = "true" ] && AUDIT_CORRECTION_MODEL="\"$CORRECTION_MODEL\""
-  [ "$ENHANCEMENT" = "true" ] && AUDIT_ENHANCEMENT_MODEL="\"$ENHANCEMENT_MODEL\""
-  [ "$TRANSLATION" = "true" ] && AUDIT_TRANSLATION_MODEL="\"$TRANSLATION_MODEL\""
+    # Record null for disabled stages so the log reflects what actually ran
+    local AUDIT_CORRECTION_MODEL="null"
+    local AUDIT_ENHANCEMENT_MODEL="null"
+    local AUDIT_TRANSLATION_MODEL="null"
+    [[ "$CORRECTION" == "true" ]] && AUDIT_CORRECTION_MODEL="\"$CORRECTION_MODEL\""
+    [[ "$ENHANCEMENT" == "true" ]] && AUDIT_ENHANCEMENT_MODEL="\"$ENHANCEMENT_MODEL\""
+    [[ "$TRANSLATION" == "true" ]] && AUDIT_TRANSLATION_MODEL="\"$TRANSLATION_MODEL\""
 
-  jq -nc \
-    --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg prompt "$ORIGINAL_PROMPT" \
-    --arg corrected "$CORRECTED_PROMPT" \
-    --arg enhanced "$ENHANCED_PROMPT" \
-    --argjson nature "$MISTAKE_NATURE_JSON" \
-    --argjson mistakes "$CORRECTIONS_JSON" \
-    --argjson correction_model "$AUDIT_CORRECTION_MODEL" \
-    --argjson enhancement_model "$AUDIT_ENHANCEMENT_MODEL" \
-    --argjson translation_model "$AUDIT_TRANSLATION_MODEL" \
-    '{
-            date:             $date,
-            prompt:           $prompt,
-            corrected:        $corrected,
-            enhanced:         $enhanced,
-            "mistake-nature": $nature,
-            mistakes:         $mistakes,
-            models: {
-                correction:   $correction_model,
-                translation:  $translation_model,
-                enhancement:  $enhancement_model
-            }
-        }' >>"$AUDIT_LOG"
-fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 7. Determine final prompt
-# The final prompt is the last enabled stage's output, in order:
-#   original → corrected → translated → enhanced
-# ═════════════════════════════════════════════════════════════════════════════
-FINAL_PROMPT="$ENHANCED_PROMPT"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 7.5 Write content-hash sentinel
-# Done here — after FINAL_PROMPT is known — so the stored hash is exact.
-# The next UserPromptSubmit invocation computes the same hash from the incoming
-# prompt text and bypasses reprocessing on a match.
-# ═════════════════════════════════════════════════════════════════════════════
-FINAL_HASH=$(_md5 "$FINAL_PROMPT")
-if [ -n "$FINAL_HASH" ]; then
-  printf '%s' "$FINAL_HASH" >"$SENTINEL"
-  debug "Sentinel written: $SENTINEL (hash=$FINAL_HASH)"
-else
-  warn "Could not compute prompt hash — sentinel not written; rewind loop guard inactive"
-fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 8. Emit hook response
-#
-# Debug mode: block the original prompt and surface all three pipeline stages
-#             via the block reason so nothing reaches Claude.
-#
-# Normal mode: block the original prompt. Final processed prompt goes to clipboard;
-#              Stop hook rewinds and pastes it so Claude receives the improved version.
-# ═════════════════════════════════════════════════════════════════════════════
-if [ "$DEBUG" = "true" ]; then
-  DEBUG_MSG=$(printf '[Better Prompt Debug]\nOriginal:   %s\nCorrected:  %s\nTranslated: %s\nEnhanced:   %s' \
-    "$ORIGINAL_PROMPT" "$CORRECTED_PROMPT" "$WORKING_PROMPT" "$ENHANCED_PROMPT")
-  ESCAPED_DEBUG=$(json_escape "$DEBUG_MSG")
-  printf '{"decision": "block", "reason": %s, "suppressOutput": false}\n' "$ESCAPED_DEBUG"
-else
-  # Block the original prompt. The final processed prompt is on the clipboard;
-  # the Stop hook will rewind and paste it so Claude receives the improved version.
-  printf '{"decision": "block", "reason": "Prompt replaced by better-prompt plugin.", "suppressOutput": false}\n'
-fi
-
-# Also copy to clipboard so the Stop hook rewind path remains available
-# as a fallback for terminals where additionalContext injection is unreliable.
-if [ "$_IS_MACOS" = true ]; then
-  printf '%s' "$FINAL_PROMPT" | pbcopy 2>/dev/null || true
-else
-  if command -v xclip &>/dev/null; then
-    printf '%s' "$FINAL_PROMPT" | xclip -selection clipboard 2>/dev/null || true
-  elif command -v xsel &>/dev/null; then
-    printf '%s' "$FINAL_PROMPT" | xsel --clipboard --input 2>/dev/null || true
-  else
-    warn "No clipboard utility found. Install xclip or xsel."
+    jq -nc \
+      --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg prompt "$ORIGINAL_PROMPT" \
+      --arg corrected "$CORRECTED_PROMPT" \
+      --arg enhanced "$ENHANCED_PROMPT" \
+      --argjson nature "$MISTAKE_NATURE_JSON" \
+      --argjson mistakes "$CORRECTIONS_JSON" \
+      --argjson correction_model "$AUDIT_CORRECTION_MODEL" \
+      --argjson enhancement_model "$AUDIT_ENHANCEMENT_MODEL" \
+      --argjson translation_model "$AUDIT_TRANSLATION_MODEL" \
+      '{
+              date:             $date,
+              prompt:           $prompt,
+              corrected:        $corrected,
+              enhanced:         $enhanced,
+              "mistake-nature": $nature,
+              mistakes:         $mistakes,
+              models: {
+                  correction:   $correction_model,
+                  translation:  $translation_model,
+                  enhancement:  $enhancement_model
+              }
+          }' >>"$AUDIT_LOG"
   fi
+
+  ###
+  ### :::: Final Prompt :::: ############
+  ###
+
+  local FINAL_PROMPT="$ENHANCED_PROMPT" # last enabled stage wins: original → corrected → translated → enhanced
+
+  # Write sentinel after FINAL_PROMPT is known so the hash is exact;
+  # next invocation compares the same hash to bypass reprocessing.
+  local FINAL_HASH
+  FINAL_HASH=$(_md5 "$FINAL_PROMPT")
+  if [[ -n "$FINAL_HASH" ]]; then
+    _atomic_write "$SENTINEL" "$FINAL_HASH"
+    _debug "Sentinel written: $SENTINEL (hash=$FINAL_HASH)"
+  else
+    _warn "Could not compute prompt hash — sentinel not written; rewind loop guard inactive"
+  fi
+
+  ###
+  ### :::: Emit Hook Response :::: ######
+  ###
+
+  # Debug: block original, surface all stages in block reason.
+  # Normal: block original; final prompt is on clipboard for the Stop hook to paste.
+  if [[ "$DEBUG" == "true" ]]; then
+    local DEBUG_MSG
+    DEBUG_MSG=$(printf '[Better Prompt Debug]\nOriginal:   %s\nCorrected:  %s\nTranslated: %s\nEnhanced:   %s' \
+      "$ORIGINAL_PROMPT" "$CORRECTED_PROMPT" "$WORKING_PROMPT" "$ENHANCED_PROMPT")
+    local ESCAPED_DEBUG
+    ESCAPED_DEBUG=$(_json_escape "$DEBUG_MSG")
+    printf '{"decision": "block", "reason": %s, "suppressOutput": false}\n' "$ESCAPED_DEBUG"
+  else
+    printf '{"decision": "block", "reason": "Prompt replaced by better-prompt plugin.", "suppressOutput": false}\n'
+  fi
+
+  # Clipboard copy keeps the Stop-hook rewind path available where
+  # additionalContext injection is unreliable
+  if [[ "$_IS_MACOS" == true ]]; then
+    printf '%s' "$FINAL_PROMPT" | pbcopy 2>/dev/null || true
+  else
+    if command -v xclip &>/dev/null; then
+      printf '%s' "$FINAL_PROMPT" | xclip -selection clipboard 2>/dev/null || true
+    elif command -v xsel &>/dev/null; then
+      printf '%s' "$FINAL_PROMPT" | xsel --clipboard --input 2>/dev/null || true
+    else
+      _warn "No clipboard utility found. Install xclip or xsel."
+    fi
+  fi
+
+  _debug "Original prompt blocked; final prompt copied to clipboard for rewind"
+
+  # Detach stop-hook from this process group so it survives
+  # when the hook runner kills enhance.sh on exit
+  local STOP_LOG="${TMPDIR:-/tmp}/better-prompt-stop.log"
+  CLAUDE_SESSION_ID="$SESSION_ID" \
+    nohup bash "${PLUGIN_ROOT}/hooks/scripts/stop-hook.sh" \
+    </dev/null >>"$STOP_LOG" 2>&1 &
+  disown
+
+  _debug "stop-hook.sh spawned (pid $!), log: $STOP_LOG"
+  exit 0
+}
+
+###
+### :::: Error Handling and Entry :::: #
+###
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  trap 'printf "[better-prompt] Error at line %d\n" "$LINENO" >&2; exit 1' ERR
+  main "$@"
 fi
-
-debug "Original prompt blocked; final prompt copied to clipboard for rewind"
-
-# Detach stop-hook.sh fully from this process group so it survives
-# when Claude Code's hook runner kills enhance.sh on exit.
-STOP_LOG="/tmp/better-prompt-stop.log"
-CLAUDE_SESSION_ID="$SESSION_ID" \
-  nohup bash "${PLUGIN_ROOT}/hooks/scripts/stop-hook.sh" \
-  </dev/null >>"$STOP_LOG" 2>&1 &
-disown
-
-debug "stop-hook.sh spawned (pid $!), log: $STOP_LOG"
-exit 0
