@@ -83,6 +83,31 @@ stop_find_session_pid_file() {
   printf '%s' "$pid_file"
 }
 
+# Fallback: find the most recently modified active interactive CLI session
+# matching the project cwd with a live process. Prints the pid_file path, or empty.
+stop_find_active_cli_session() {
+  local project_dir="${CLAUDE_PROJECT_DIR:-}"
+  local pid_file=""
+
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    local entrypoint cwd pid
+    entrypoint=$(jq -r '.entrypoint // empty' "$f" 2>/dev/null) || continue
+    [[ "$entrypoint" == "cli" ]] || continue
+    if [[ -n "$project_dir" ]]; then
+      cwd=$(jq -r '.cwd // empty' "$f" 2>/dev/null) || continue
+      [[ "$cwd" == "$project_dir" ]] || continue
+    fi
+    pid=$(jq -r '.pid // empty' "$f" 2>/dev/null) || continue
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      pid_file="$f"
+      break
+    fi
+  done < <(ls -t "$ACTIVE_SESSIONS_DIR"/*.json 2>/dev/null)
+
+  printf '%s' "$pid_file"
+}
+
 # Extract the PID from a session PID file.
 # Prints the PID, or empty string if extraction fails.
 stop_extract_pid() {
@@ -192,9 +217,13 @@ stop_check_prerequisites() {
   session_pid_file=$(stop_find_session_pid_file "$session_id")
 
   if [[ -z "$session_pid_file" ]] || [[ ! -f "$session_pid_file" ]]; then
-    _debug "$debug" "Session PID file not found for session: $session_id"
-    printf 'no_pid_file'
-    return 0
+    _debug "$debug" "Session PID file not found for session: $session_id, trying active CLI session fallback"
+    session_pid_file=$(stop_find_active_cli_session)
+    if [[ -z "$session_pid_file" ]] || [[ ! -f "$session_pid_file" ]]; then
+      _debug "$debug" "No active CLI session found either"
+      printf 'no_pid_file'
+      return 0
+    fi
   fi
 
   local session_pid

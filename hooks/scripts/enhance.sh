@@ -5,6 +5,15 @@
 #
 set -euo pipefail
 
+# Prevent recursive hook invocation: sub-agents (correction, translation,
+# enhancement) are spawned via `claude -p` which re-triggers UserPromptSubmit.
+# When this env var is set, pass through immediately.
+if [[ "${BETTER_PROMPT_CHILD:-}" == "1" ]]; then
+  printf '{"continue": true}\n'
+  exit 0
+fi
+export BETTER_PROMPT_CHILD=1
+
 ###
 ### :::: Constants and Globals :::: ####
 ###
@@ -83,6 +92,7 @@ _parse_config() {
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     key="${line%%:*}"
+    [[ -z "$key" ]] && continue
     val="${line#*:}"
     val="${val#"${val%%[![:space:]]*}"}"
     val="${val%"${val##*[![:space:]]}"}"
@@ -218,7 +228,7 @@ enhance_run_correction() {
 Prompt: $working_prompt"
 
   local correction_result=""
-  correction_result=$(claude -p --agent better-prompt:prompt-correction --model "$correction_model" "$correction_prompt" 2>&1) || {
+  correction_result=$(BETTER_PROMPT_CHILD=1 claude -p --agent better-prompt:prompt-correction --model "$correction_model" "$correction_prompt" 2>&1) || {
     _warn "Correction stage failed: $correction_result"
     correction_result=""
   }
@@ -247,7 +257,7 @@ enhance_run_translation() {
   _debug "Running translation with model: $translation_model"
 
   local translation_result=""
-  translation_result=$(claude -p --agent better-prompt:prompt-translation --model "$translation_model" "$working_prompt" 2>&1) || {
+  translation_result=$(BETTER_PROMPT_CHILD=1 claude -p --agent better-prompt:prompt-translation --model "$translation_model" "$working_prompt" 2>&1) || {
     _warn "Translation stage failed: $translation_result"
     translation_result=""
   }
@@ -279,11 +289,11 @@ Prompt:
 $working_prompt"
 
   local enhance_json=""
-  enhance_json=$(claude -p "${resume_args[@]}" --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" "$enhance_prompt" 2>&1) || {
+  enhance_json=$(BETTER_PROMPT_CHILD=1 claude -p "${resume_args[@]}" --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" "$enhance_prompt" 2>&1) || {
     if [[ -f "$enhance_session_file" ]]; then
       _debug "Resume failed, retrying without session"
       rm -f "$enhance_session_file"
-      enhance_json=$(claude -p --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" "$enhance_prompt" 2>&1) || {
+      enhance_json=$(BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" "$enhance_prompt" 2>&1) || {
         _warn "Enhancement stage failed: $enhance_json"
         enhance_json=""
       }
@@ -402,6 +412,7 @@ enhance_spawn_stop_hook() {
   local session_id="$1"
   local stop_log="${TMPDIR:-/tmp}/better-prompt-stop.log"
   CLAUDE_SESSION_ID="$session_id" \
+  CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
     nohup bash "${PLUGIN_ROOT}/hooks/scripts/stop-hook.sh" \
     </dev/null >>"$stop_log" 2>&1 &
   disown
