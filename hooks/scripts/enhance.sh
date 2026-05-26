@@ -140,21 +140,12 @@ enhance_resolve_session_id() {
   if [[ -z "$session_id" ]]; then
     local session_dir="$HOME/.claude/session-env/"
     if [[ -d "$session_dir" ]]; then
-      if [[ "$_IS_MACOS" == true ]]; then
-        session_id=$(find "$session_dir" -mindepth 1 -maxdepth 1 -type d \
-          -exec stat -f '%m %N' {} \; 2>/dev/null |
-          sort -rn | head -1 | awk '{print $NF}' | xargs basename) || {
-          _warn "Failed to find session ID on macOS"
-          session_id=""
-        }
-      else
-        session_id=$(find "$session_dir" -mindepth 1 -maxdepth 1 -type d \
-          -printf '%T@ %f\n' 2>/dev/null |
-          sort -rn | head -1 | cut -d' ' -f2-) || {
-          _warn "Failed to find session ID"
-          session_id=""
-        }
-      fi
+      # ls -t is ~50x faster than find -exec stat; session IDs are UUIDs
+      # shellcheck disable=SC2012
+      session_id=$(ls -1t "$session_dir" 2>/dev/null | head -n 1) || {
+        _warn "Failed to find session ID"
+        session_id=""
+      }
     fi
   fi
 
@@ -240,9 +231,15 @@ Prompt: $working_prompt"
   if [[ -n "$correction_result" ]] && command -v jq &>/dev/null; then
     correction_result=$(printf '%s' "$correction_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
 
-    corrected=$(printf '%s' "$correction_result" | jq -r '.corrected // empty' 2>/dev/null || true)
-    CORRECTIONS_JSON=$(printf '%s' "$correction_result" | jq -c '.mistakes // []' 2>/dev/null || echo "[]")
-    MISTAKE_NATURE_JSON=$(printf '%s' "$CORRECTIONS_JSON" | jq -c '[.[].type] | unique' 2>/dev/null || echo "[]")
+    local _sep=$'\x01' _cr_output
+    _cr_output=$(printf '%s' "$correction_result" | jq -j --arg s "$_sep" \
+      '.corrected // "", $s, (.mistakes // [] | @json), $s, ([.mistakes[]?.type] | unique | @json)' 2>/dev/null) || _cr_output=""
+    if [[ -n "$_cr_output" ]]; then
+      corrected="${_cr_output%%"$_sep"*}"
+      local _rest="${_cr_output#*"$_sep"}"
+      CORRECTIONS_JSON="${_rest%%"$_sep"*}"
+      MISTAKE_NATURE_JSON="${_rest#*"$_sep"}"
+    fi
   fi
 
   [[ -n "$corrected" ]] && WORKING_PROMPT="$corrected"
@@ -305,10 +302,14 @@ $working_prompt"
 
   local enhanced_result=""
   if [[ -n "$enhance_json" ]] && command -v jq &>/dev/null; then
-    enhanced_result=$(printf '%s' "$enhance_json" | jq -r '.result // empty' 2>/dev/null || true)
-    local enhance_sid
-    enhance_sid=$(printf '%s' "$enhance_json" | jq -r '.session_id // empty' 2>/dev/null || true)
-    [[ -n "$enhance_sid" ]] && _atomic_write "$enhance_session_file" "$enhance_sid"
+    local _sep=$'\x01' _en_output
+    _en_output=$(printf '%s' "$enhance_json" | jq -j --arg s "$_sep" \
+      '.result // "", $s, .session_id // ""' 2>/dev/null) || _en_output=""
+    if [[ -n "$_en_output" ]]; then
+      enhanced_result="${_en_output%%"$_sep"*}"
+      local enhance_sid="${_en_output#*"$_sep"}"
+      [[ -n "$enhance_sid" ]] && _atomic_write "$enhance_session_file" "$enhance_sid"
+    fi
   else
     enhanced_result="$enhance_json"
   fi
@@ -412,7 +413,7 @@ enhance_spawn_stop_hook() {
   local session_id="$1"
   local stop_log="${TMPDIR:-/tmp}/better-prompt-stop.log"
   CLAUDE_SESSION_ID="$session_id" \
-  CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
+    CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
     nohup bash "${PLUGIN_ROOT}/hooks/scripts/stop-hook.sh" \
     </dev/null >>"$stop_log" 2>&1 &
   disown
