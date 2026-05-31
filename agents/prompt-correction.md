@@ -38,6 +38,7 @@ Return ONLY a raw JSON object — no markdown, no code blocks, no explanation:
 ```json
 {
   "corrected": "<corrected prompt text>",
+  "language": "<2-letter ISO 639-1 code of the detected language, e.g. en, fr, de, es, ja, zh>",
   "mistakes": [
     {
       "type": "<nature of the mistake, e.g. grammar, spelling, punctuation, word-choice, capitalisation>",
@@ -53,6 +54,7 @@ If no mistakes are found, return:
 ```json
 {
   "corrected": "<original prompt>",
+  "language": "<2-letter ISO 639-1 code>",
   "mistakes": []
 }
 ```
@@ -76,6 +78,7 @@ If no mistakes are found, return:
 ```json
 {
   "corrected": "She doesn't know what to do about the bug in the codebase.",
+  "language": "en",
   "mistakes": [
     {
       "type": "grammar",
@@ -94,6 +97,7 @@ If no mistakes are found, return:
 ```json
 {
   "corrected": "I need to receive the data before processing it.",
+  "language": "en",
   "mistakes": [
     {
       "type": "spelling",
@@ -117,6 +121,7 @@ If no mistakes are found, return:
 ```json
 {
   "corrected": "Create a React component for the user profile page.",
+  "language": "en",
   "mistakes": []
 }
 ```
@@ -129,6 +134,7 @@ If no mistakes are found, return:
 ```json
 {
   "corrected": "Fix the bug—it's really annoying",
+  "language": "en",
   "mistakes": [
     {
       "type": "grammar",
@@ -149,6 +155,7 @@ Note: The em-dash and lowercase style are preserved; only the clear error (its/i
 ```json
 {
   "corrected": "Can you refactor @src/auth.ts so it doesn't throw on null inputs?",
+  "language": "en",
   "mistakes": [
     {
       "type": "grammar",
@@ -169,6 +176,7 @@ Note: `@src/auth.ts` is untouched; only the grammar error is corrected.
 ```json
 {
   "corrected": "Tell me a prominent scholar who is well known.",
+  "language": "en",
   "mistakes": [
     {
       "type": "spelling",
@@ -194,6 +202,7 @@ Note: Each mistake entry targets the specific erroneous word only, not the surro
 ```json
 {
   "corrected": "The effect of the change on performance was minimal.",
+  "language": "en",
   "mistakes": [
     {
       "type": "word-choice",
@@ -212,6 +221,7 @@ Note: Each mistake entry targets the specific erroneous word only, not the surro
 ```json
 {
   "corrected": "What's the status of the deploy?",
+  "language": "en",
   "mistakes": [
     {
       "type": "punctuation",

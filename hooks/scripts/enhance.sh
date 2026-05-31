@@ -14,18 +14,15 @@ if [[ "${BETTER_PROMPT_CHILD:-}" == "1" ]]; then
 fi
 export BETTER_PROMPT_CHILD=1
 
-###
-### :::: Constants and Globals :::: ####
-###
-
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
+readonly PLUGIN_ROOT CONFIG
 
-if [[ -z "${_IS_MACOS:-}" ]]; then
+if [[ -z "${IS_MACOS:-}" ]]; then
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    _IS_MACOS=true
+    IS_MACOS=true
   else
-    _IS_MACOS=false
+    IS_MACOS=false
   fi
 fi
 
@@ -50,22 +47,22 @@ _json_escape() {
   if command -v jq &>/dev/null; then
     printf '%s' "$input" | jq -Rs .
   else
-    printf '%s' "$input" | sed 's/\\/\\\\/g; s/"/\\"/g'
+    printf '%s' "$input" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
   fi
   return 0
 }
 
+# temp + rename prevents partial reads from concurrent processes
 _atomic_write() {
   local target="$1" content="$2"
   local tmp
   tmp=$(mktemp "${target}.XXXXXX") || return 1
-  # Temp + rename prevents partial reads from concurrent processes
   printf '%s' "$content" >"$tmp" && mv -f "$tmp" "$target"
   return 0
 }
 
+# macOS md5 prints only the digest; GNU md5sum appends the filename
 _md5() {
-  # macOS `md5` prints only the digest; GNU `md5sum` appends the filename
   printf '%s' "$1" | (md5 2>/dev/null || md5sum 2>/dev/null | cut -c1-32)
   return 0
 }
@@ -113,19 +110,16 @@ _read_stdin_payload() {
 }
 
 ###
-### :::: Testable Functions :::: ########
+### :::: Public Functions :::: #########
 ###
 
-# Parse the prompt field from a JSON payload string.
-# Prints the prompt value, or empty string if absent/unparseable.
-enhance_extract_prompt() {
+enhance::extract_prompt() {
   local payload="$1"
   printf '%s' "$payload" | jq -r '.prompt // empty' 2>/dev/null || true
+  return 0
 }
 
-# Resolve session ID from stdin payload, env var, or most-recent session directory.
-# Prints the session ID, or empty string if none found.
-enhance_resolve_session_id() {
+enhance::resolve_session_id() {
   local payload="$1"
   local session_id=""
 
@@ -157,26 +151,24 @@ enhance_resolve_session_id() {
   fi
 
   printf '%s' "$session_id"
+  return 0
 }
 
-# Check whether the plugin is globally disabled.
-# Prints "true" or "false".
-enhance_check_enabled() {
-  printf '%s' "$1"
-}
-
-# Check whether a prompt should bypass enhancement (slash/bang directives).
-# Returns 0 if the prompt is a directive (should be skipped), 1 otherwise.
-enhance_is_directive() {
+enhance::is_directive() {
   if [[ "$1" =~ ^[/!] ]]; then
     return 0
   fi
   return 1
 }
 
-# Evaluate the sentinel loop guard.
-# Returns 0 if the prompt should be bypassed (sentinel matched), 1 otherwise.
-enhance_check_sentinel() {
+# Guard against re-fired prompts within 60s by comparing MD5 hashes.
+# Arguments:
+#   $1 - sentinel_path: file holding the previous prompt hash
+#   $2 - original_prompt: the incoming prompt text
+# Returns:
+#   0 - sentinel matched (prompt should pass through unchanged)
+#   1 - no match or stale sentinel (prompt should proceed)
+enhance::check_sentinel() {
   local sentinel_path="$1"
   local original_prompt="$2"
 
@@ -206,9 +198,12 @@ enhance_check_sentinel() {
   return 1
 }
 
-# Run the correction stage. Prints nothing; sets globals CORRECTED_PROMPT,
-# WORKING_PROMPT, CORRECTIONS_JSON, MISTAKE_NATURE_JSON.
-enhance_run_correction() {
+# Side effects: sets globals WORKING_PROMPT, CORRECTED_PROMPT, CORRECTIONS_JSON,
+# MISTAKE_NATURE_JSON, DETECTED_LANGUAGE.
+# Arguments:
+#   $1 - working_prompt: prompt text to correct
+#   $2 - correction_model: model identifier for the correction agent
+enhance::run_correction() {
   local working_prompt="$1"
   local correction_model="$2"
 
@@ -231,39 +226,50 @@ Prompt: $working_prompt"
   if [[ -n "$correction_result" ]] && command -v jq &>/dev/null; then
     correction_result=$(printf '%s' "$correction_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
 
-    local _sep=$'\x01' _cr_output
+    local -r _sep=$'\x01'
+    local _cr_output
     _cr_output=$(printf '%s' "$correction_result" | jq -j --arg s "$_sep" \
-      '.corrected // "", $s, (.mistakes // [] | @json), $s, ([.mistakes[]?.type] | unique | @json)' 2>/dev/null) || _cr_output=""
+      '.corrected // "", $s, (.mistakes // [] | @json), $s, ([.mistakes[]?.type] | unique | @json), $s, (.language // "en")' 2>/dev/null) || _cr_output=""
     if [[ -n "$_cr_output" ]]; then
       corrected="${_cr_output%%"$_sep"*}"
       local _rest="${_cr_output#*"$_sep"}"
       CORRECTIONS_JSON="${_rest%%"$_sep"*}"
-      MISTAKE_NATURE_JSON="${_rest#*"$_sep"}"
+      local _rest2="${_rest#*"$_sep"}"
+      MISTAKE_NATURE_JSON="${_rest2%%"$_sep"*}"
+      DETECTED_LANGUAGE="${_rest2#*"$_sep"}"
     fi
   fi
 
   [[ -n "$corrected" ]] && WORKING_PROMPT="$corrected"
   CORRECTED_PROMPT="$WORKING_PROMPT"
+  return 0
 }
 
-# Run the translation stage. Prints nothing; sets WORKING_PROMPT.
-enhance_run_translation() {
+# Side effects: overwrites WORKING_PROMPT global with translated text.
+# Arguments:
+#   $1 - working_prompt: prompt text to translate
+#   $2 - translation_model: model identifier for the translation agent
+enhance::run_translation() {
   local working_prompt="$1"
   local translation_model="$2"
 
   _debug "Running translation with model: $translation_model"
 
+  local translation_prompt="Translate the following text to English if it is not already in English. If it is already in English, return it unchanged. Preserve @mentions, code identifiers, and technical terms exactly. Return ONLY the translated or unchanged text.
+
+Text: $working_prompt"
+
   local translation_result=""
-  translation_result=$(BETTER_PROMPT_CHILD=1 claude -p --agent better-prompt:prompt-translation --model "$translation_model" "$working_prompt" 2>&1) || {
+  translation_result=$(BETTER_PROMPT_CHILD=1 claude -p --agent better-prompt:prompt-translation --model "$translation_model" "$translation_prompt" 2>&1) || {
     _warn "Translation stage failed: $translation_result"
     translation_result=""
   }
 
   [[ -n "$translation_result" ]] && WORKING_PROMPT="$translation_result"
+  return 0
 }
 
-# Run the enhancement stage. Prints the enhanced prompt text.
-enhance_run_enhancement_stage() {
+enhance::run_enhancement_stage() {
   local working_prompt="$1"
   local enhancement_model="$2"
   local enhance_session_file="$3"
@@ -302,7 +308,8 @@ $working_prompt"
 
   local enhanced_result=""
   if [[ -n "$enhance_json" ]] && command -v jq &>/dev/null; then
-    local _sep=$'\x01' _en_output
+    local -r _sep=$'\x01'
+    local _en_output
     _en_output=$(printf '%s' "$enhance_json" | jq -j --arg s "$_sep" \
       '.result // "", $s, .session_id // ""' 2>/dev/null) || _en_output=""
     if [[ -n "$_en_output" ]]; then
@@ -316,10 +323,23 @@ $working_prompt"
 
   [[ -z "$enhanced_result" ]] && enhanced_result="$working_prompt"
   printf '%s' "$enhanced_result"
+  return 0
 }
 
-# Write the audit log entry. Prints nothing.
-enhance_write_audit() {
+# Arguments:
+#   $1  - audit_log: path to the JSONL audit file
+#   $2  - original_prompt: unmodified user prompt
+#   $3  - corrected_prompt: post-correction text
+#   $4  - enhanced_prompt: final prompt after all stages
+#   $5  - mistake_nature_json: JSON array of mistake type strings
+#   $6  - corrections_json: JSON array of mistake objects
+#   $7  - correction: "true"/"false" whether correction ran
+#   $8  - correction_model: model used for correction
+#   $9  - enhancement: "true"/"false" whether enhancement ran
+#   $10 - enhancement_model: model used for enhancement
+#   $11 - translation: "true"/"false" whether translation ran
+#   $12 - translation_model: model used for translation
+enhance::write_audit() {
   local audit_log="$1"
   local original_prompt="$2"
   local corrected_prompt="$3"
@@ -351,15 +371,23 @@ enhance_write_audit() {
 
   mkdir -p "$(dirname "$audit_log")"
 
+  local audit_language
+  if [[ -n "${DETECTED_LANGUAGE:-}" ]]; then
+    audit_language="\"$DETECTED_LANGUAGE\""
+  else
+    audit_language="null"
+  fi
+
   local audit_date
   audit_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  local audit_filter='{"date":$date,"prompt":$prompt,"corrected":$corrected,"enhanced":$enhanced,"mistake-nature":$nature,"mistakes":$mistakes,"models":{"correction":$correction_model,"translation":$translation_model,"enhancement":$enhancement_model}}'
+  # shellcheck disable=SC2016
+  local -r audit_filter='{"date":$date,"prompt":$prompt,"language":$language,"corrected":$corrected,"enhanced":$enhanced,"mistake-nature":$nature,"mistakes":$mistakes,"models":{"correction":$correction_model,"translation":$translation_model,"enhancement":$enhancement_model}}'
 
-  jq -nc --arg date "$audit_date" --arg prompt "$original_prompt" --arg corrected "$corrected_prompt" --arg enhanced "$enhanced_prompt" --argjson nature "$mistake_nature_json" --argjson mistakes "$corrections_json" --argjson correction_model "$audit_correction_model" --argjson enhancement_model "$audit_enhancement_model" --argjson translation_model "$audit_translation_model" "$audit_filter" >>"$audit_log"
+  jq -nc --arg date "$audit_date" --arg prompt "$original_prompt" --argjson language "$audit_language" --arg corrected "$corrected_prompt" --arg enhanced "$enhanced_prompt" --argjson nature "$mistake_nature_json" --argjson mistakes "$corrections_json" --argjson correction_model "$audit_correction_model" --argjson enhancement_model "$audit_enhancement_model" --argjson translation_model "$audit_translation_model" "$audit_filter" >>"$audit_log"
+  return 0
 }
 
-# Write the sentinel hash file. Prints nothing.
-enhance_write_sentinel() {
+enhance::write_sentinel() {
   local sentinel_path="$1"
   local final_prompt="$2"
   local final_hash
@@ -372,10 +400,9 @@ enhance_write_sentinel() {
   fi
 }
 
-# Copy text to the system clipboard. Prints nothing.
-enhance_copy_to_clipboard() {
+enhance::copy_to_clipboard() {
   local text="$1"
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     printf '%s' "$text" | pbcopy 2>/dev/null || true
   else
     if command -v xclip &>/dev/null; then
@@ -386,10 +413,19 @@ enhance_copy_to_clipboard() {
       _warn "No clipboard utility found. Install xclip or xsel."
     fi
   fi
+  return 0
 }
 
-# Build the hook response JSON string and print it.
-enhance_format_response() {
+# Arguments:
+#   $1 - debug_mode: "true"/"false"
+#   $2 - original_prompt: unmodified user prompt
+#   $3 - corrected_prompt: post-correction text
+#   $4 - working_prompt: current state (may include translation)
+#   $5 - enhanced_prompt: final prompt after all stages
+#   $6 - correction: "true"/"false"
+#   $7 - translation: "true"/"false"
+#   $8 - enhancement: "true"/"false"
+enhance::format_response() {
   local debug_mode="$1"
   local original_prompt="$2"
   local corrected_prompt="$3"
@@ -402,7 +438,10 @@ enhance_format_response() {
   if [[ "$debug_mode" == "true" ]]; then
     local debug_msg="[Better Prompt Debug]\nOriginal:   $original_prompt"
     [[ "$correction" == "true" ]] && debug_msg+="\nCorrected:  $corrected_prompt"
-    [[ "$translation" == "true" ]] && debug_msg+="\nTranslated: $working_prompt"
+    if [[ "$translation" == "true" ]]; then
+      debug_msg+="\nLanguage:   ${DETECTED_LANGUAGE:-en}"
+      [[ "${DETECTED_LANGUAGE:-en}" != "en" ]] && debug_msg+="\nTranslated: $working_prompt"
+    fi
     [[ "$enhancement" == "true" ]] && debug_msg+="\nEnhanced:   $enhanced_prompt"
     debug_msg=$(printf '%b' "$debug_msg")
     local escaped_debug
@@ -411,10 +450,10 @@ enhance_format_response() {
   else
     printf '{"decision": "block", "reason": "Prompt replaced by better-prompt plugin.", "suppressOutput": false}\n'
   fi
+  return 0
 }
 
-# Spawn the stop-hook as a detached background process. Prints nothing.
-enhance_spawn_stop_hook() {
+enhance::spawn_stop_hook() {
   local session_id="$1"
   local stop_log="${TMPDIR:-/tmp}/better-prompt-stop.log"
   CLAUDE_SESSION_ID="$session_id" \
@@ -423,10 +462,10 @@ enhance_spawn_stop_hook() {
     </dev/null >>"$stop_log" 2>&1 &
   disown
   _debug "stop-hook.sh spawned (pid $!), log: $stop_log"
+  return 0
 }
 
-# Populate configuration settings from parsed config into global variables.
-enhance_load_settings() {
+enhance::load_settings() {
   DEBUG=$(_get_setting "debug_mode" "false")
   ENABLED=$(_get_setting "enabled" "true")
   CORRECTION=$(_get_setting "correction" "true")
@@ -439,12 +478,10 @@ enhance_load_settings() {
   AUDIT_LOG="${CLAUDE_PROJECT_DIR:-.}/.claude/prompts.json"
   SENTINEL="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-sentinel"
   ENHANCE_SESSION_FILE="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-enhance-session"
+  return 0
 }
 
-# Evaluate whether the prompt should skip enhancement entirely.
-# Prints the skip reason string (non-empty) if the prompt should pass through unchanged.
-# Prints empty string if enhancement should proceed.
-enhance_should_skip() {
+enhance::should_skip() {
   local enabled="$1"
   local prompt="$2"
   local session_id="$3"
@@ -460,12 +497,12 @@ enhance_should_skip() {
     return 0
   fi
 
-  if enhance_is_directive "$prompt"; then
+  if enhance::is_directive "$prompt"; then
     printf 'directive'
     return 0
   fi
 
-  if enhance_check_sentinel "$sentinel_path" "$prompt"; then
+  if enhance::check_sentinel "$sentinel_path" "$prompt"; then
     printf 'sentinel'
     return 0
   fi
@@ -473,11 +510,7 @@ enhance_should_skip() {
   printf ''
 }
 
-# Run the correction, translation, and enhancement pipeline stages.
-# Sets globals: WORKING_PROMPT, CORRECTED_PROMPT, ENHANCED_PROMPT,
-#   CORRECTIONS_JSON, MISTAKE_NATURE_JSON.
-# Returns the enhanced prompt via ENHANCED_PROMPT global (not stdout).
-enhance_run_pipeline() {
+enhance::run_pipeline() {
   local original_prompt="$1"
   local correction="$2"
   local correction_model="$3"
@@ -493,40 +526,43 @@ enhance_run_pipeline() {
   MISTAKE_NATURE_JSON="[]"
 
   if [[ "$correction" == "true" ]]; then
-    enhance_run_correction "$WORKING_PROMPT" "$correction_model"
+    enhance::run_correction "$WORKING_PROMPT" "$correction_model"
   fi
   CORRECTED_PROMPT="$WORKING_PROMPT"
 
   if [[ "$translation" == "true" ]]; then
-    enhance_run_translation "$WORKING_PROMPT" "$translation_model"
+    if [[ -n "${DETECTED_LANGUAGE:-}" && "$DETECTED_LANGUAGE" == "en" ]]; then
+      _debug "Prompt is English — skipping translation"
+    else
+      enhance::run_translation "$WORKING_PROMPT" "$translation_model"
+    fi
   fi
 
   ENHANCED_PROMPT="$WORKING_PROMPT"
   if [[ "$enhancement" == "true" ]]; then
-    ENHANCED_PROMPT=$(enhance_run_enhancement_stage "$WORKING_PROMPT" "$enhancement_model" "$enhance_session_file")
+    ENHANCED_PROMPT=$(enhance::run_enhancement_stage "$WORKING_PROMPT" "$enhancement_model" "$enhance_session_file")
   fi
+  return 0
 }
 
-# Write audit log, sentinel, and produce the final hook response.
-# Prints the JSON hook response to stdout.
-enhance_finalize() {
+enhance::finalize() {
   local original_prompt="$1"
   local session_id="$2"
 
   local final_prompt="${ENHANCED_PROMPT:-$WORKING_PROMPT}"
 
   if [[ "$AUDIT" == "true" ]] && command -v jq &>/dev/null; then
-    enhance_write_audit "$AUDIT_LOG" "$original_prompt" "$CORRECTED_PROMPT" "$final_prompt" \
+    enhance::write_audit "$AUDIT_LOG" "$original_prompt" "$CORRECTED_PROMPT" "$final_prompt" \
       "$MISTAKE_NATURE_JSON" "$CORRECTIONS_JSON" \
       "$CORRECTION" "$CORRECTION_MODEL" "$ENHANCEMENT" "$ENHANCEMENT_MODEL" "$TRANSLATION" "$TRANSLATION_MODEL"
   fi
 
-  enhance_write_sentinel "$SENTINEL" "$final_prompt"
-  enhance_format_response "$DEBUG" "$original_prompt" "$CORRECTED_PROMPT" "$WORKING_PROMPT" "$final_prompt" \
+  enhance::write_sentinel "$SENTINEL" "$final_prompt"
+  enhance::format_response "$DEBUG" "$original_prompt" "$CORRECTED_PROMPT" "$WORKING_PROMPT" "$final_prompt" \
     "$CORRECTION" "$TRANSLATION" "$ENHANCEMENT"
-  enhance_copy_to_clipboard "$final_prompt"
+  enhance::copy_to_clipboard "$final_prompt"
   _debug "Original prompt blocked; final prompt copied to clipboard for rewind"
-  enhance_spawn_stop_hook "$session_id"
+  enhance::spawn_stop_hook "$session_id"
 }
 
 ###
@@ -536,41 +572,37 @@ enhance_finalize() {
 main() {
   local STDIN_PAYLOAD ORIGINAL_PROMPT
   STDIN_PAYLOAD=$(_read_stdin_payload)
-  ORIGINAL_PROMPT=$(enhance_extract_prompt "$STDIN_PAYLOAD")
+  ORIGINAL_PROMPT=$(enhance::extract_prompt "$STDIN_PAYLOAD")
 
   declare -A _CFG=()
   _parse_config
-  enhance_load_settings
+  enhance::load_settings
 
   local SESSION_ID
-  SESSION_ID=$(enhance_resolve_session_id "$STDIN_PAYLOAD")
+  SESSION_ID=$(enhance::resolve_session_id "$STDIN_PAYLOAD")
 
   local SKIP_REASON
-  SKIP_REASON=$(enhance_should_skip "$ENABLED" "$ORIGINAL_PROMPT" "$SESSION_ID" "$SENTINEL")
+  SKIP_REASON=$(enhance::should_skip "$ENABLED" "$ORIGINAL_PROMPT" "$SESSION_ID" "$SENTINEL")
   if [[ -n "$SKIP_REASON" ]]; then
     printf '{"continue": true}\n'
     exit 0
   fi
 
   WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
-  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
+  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]" DETECTED_LANGUAGE=""
 
-  enhance_run_pipeline "$ORIGINAL_PROMPT" \
+  enhance::run_pipeline "$ORIGINAL_PROMPT" \
     "$CORRECTION" "$CORRECTION_MODEL" \
     "$TRANSLATION" "$TRANSLATION_MODEL" \
     "$ENHANCEMENT" "$ENHANCEMENT_MODEL" \
     "$ENHANCE_SESSION_FILE"
 
-  enhance_finalize "$ORIGINAL_PROMPT" "$SESSION_ID"
+  enhance::finalize "$ORIGINAL_PROMPT" "$SESSION_ID"
 
   exit 0
 }
 
-###
-### :::: Error Handling and Entry :::: #
-###
-
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  trap 'printf "[better-prompt] Error at line %d\n" "$LINENO" >&2; exit 1' ERR
+  trap 'printf "[better-prompt] Error at %s:%d (%s)\n" "${BASH_SOURCE[0]##*/}" "$LINENO" "${FUNCNAME[0]:-main}" >&2; exit 1' ERR
   main "$@"
 fi

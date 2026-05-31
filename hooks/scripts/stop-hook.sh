@@ -6,23 +6,20 @@
 #
 set -euo pipefail
 
-###
-### :::: Constants and globals :::: ####
-###
-
 CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
 ACTIVE_SESSIONS_DIR="${BETTER_PROMPT_SESSIONS_DIR:-$HOME/.claude/sessions}"
+readonly CONFIG ACTIVE_SESSIONS_DIR
 
-if [[ -z "${_IS_MACOS:-}" ]]; then
+if [[ -z "${IS_MACOS:-}" ]]; then
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    _IS_MACOS=true
+    IS_MACOS=true
   else
-    _IS_MACOS=false
+    IS_MACOS=false
   fi
 fi
 
 ###
-### :::: Private functions :::: ########
+### :::: Private Functions :::: ########
 ###
 
 _bootstrap_debug() {
@@ -47,12 +44,10 @@ _debug() {
 }
 
 ###
-### :::: Testable functions :::: #######
+### :::: Public Functions :::: #########
 ###
 
-# Resolve session ID from stdin JSON or environment variable.
-# Prints the session ID, or empty string if none found.
-stop_resolve_session_id() {
+stop::resolve_session_id() {
   local session_id=""
 
   if [[ ! -t 0 ]]; then
@@ -64,11 +59,10 @@ stop_resolve_session_id() {
   fi
 
   printf '%s' "$session_id"
+  return 0
 }
 
-# Find the session PID file matching the given session ID.
-# Prints the file path, or empty string if not found.
-stop_find_session_pid_file() {
+stop::find_session_pid_file() {
   local session_id="$1"
   local pid_file=""
 
@@ -81,11 +75,10 @@ stop_find_session_pid_file() {
   done
 
   printf '%s' "$pid_file"
+  return 0
 }
 
-# Fallback: find the most recently modified active interactive CLI session
-# matching the project cwd with a live process. Prints the pid_file path, or empty.
-stop_find_active_cli_session() {
+stop::find_active_cli_session() {
   local project_dir="${CLAUDE_PROJECT_DIR:-}"
   local pid_file=""
 
@@ -106,11 +99,10 @@ stop_find_active_cli_session() {
   done < <(ls -t "$ACTIVE_SESSIONS_DIR"/*.json 2>/dev/null)
 
   printf '%s' "$pid_file"
+  return 0
 }
 
-# Extract the PID from a session PID file.
-# Prints the PID, or empty string if extraction fails.
-stop_extract_pid() {
+stop::extract_pid() {
   local pid_file="$1"
 
   if [[ -z "$pid_file" ]] || [[ ! -f "$pid_file" ]]; then
@@ -126,19 +118,17 @@ stop_extract_pid() {
   else
     printf '%s' "$pid"
   fi
+  return 0
 }
 
-# Check whether a process is running.
-# Returns 0 if running, 1 otherwise.
-stop_is_process_running() {
+stop::is_process_running() {
   kill -0 "$1" 2>/dev/null
 }
 
-# Read the clipboard content. Prints the content or empty string.
-stop_read_clipboard() {
+stop::read_clipboard() {
   local content=""
 
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     content=$(pbpaste 2>/dev/null) || content=""
   else
     if command -v xclip &>/dev/null; then
@@ -149,16 +139,15 @@ stop_read_clipboard() {
   fi
 
   printf '%s' "$content"
+  return 0
 }
 
-# Send the Cmd+V + Enter keystroke sequence to inject the enhanced prompt.
-# Returns 0 on success, 1 if the required tool is unavailable or execution fails.
-stop_send_rewind_sequence() {
+stop::send_rewind_sequence() {
   local debug="$1"
 
   sleep 1
 
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     if ! command -v osascript &>/dev/null; then
       _debug "$debug" "osascript not found — cannot send keystrokes on macOS"
       return 1
@@ -198,10 +187,12 @@ APPLESCRIPT
   return 0
 }
 
-# Check whether the stop hook should skip rewind because prerequisite checks fail.
-# Prints the skip reason string (non-empty) if the hook should pass through.
-# Prints empty string if rewind should proceed.
-stop_check_prerequisites() {
+# Returns skip reason string (non-empty) if rewind should be aborted, empty otherwise.
+# Side effects: reads session files from ACTIVE_SESSIONS_DIR.
+# Arguments:
+#   $1 - debug: "true"/"false" for debug output
+#   $2 - session_id: Claude session identifier
+stop::check_prerequisites() {
   local debug="$1"
   local session_id="$2"
 
@@ -214,11 +205,11 @@ stop_check_prerequisites() {
   _debug "$debug" "Stop hook fired for session: $session_id"
 
   local session_pid_file
-  session_pid_file=$(stop_find_session_pid_file "$session_id")
+  session_pid_file=$(stop::find_session_pid_file "$session_id")
 
   if [[ -z "$session_pid_file" ]] || [[ ! -f "$session_pid_file" ]]; then
     _debug "$debug" "Session PID file not found for session: $session_id, trying active CLI session fallback"
-    session_pid_file=$(stop_find_active_cli_session)
+    session_pid_file=$(stop::find_active_cli_session)
     if [[ -z "$session_pid_file" ]] || [[ ! -f "$session_pid_file" ]]; then
       _debug "$debug" "No active CLI session found either"
       printf 'no_pid_file'
@@ -227,7 +218,7 @@ stop_check_prerequisites() {
   fi
 
   local session_pid
-  session_pid=$(stop_extract_pid "$session_pid_file")
+  session_pid=$(stop::extract_pid "$session_pid_file")
 
   if [[ -z "$session_pid" ]]; then
     _debug "$debug" "Failed to extract PID from session file: $session_pid_file"
@@ -237,7 +228,7 @@ stop_check_prerequisites() {
 
   _debug "$debug" "Found session PID: $session_pid"
 
-  if ! stop_is_process_running "$session_pid"; then
+  if ! stop::is_process_running "$session_pid"; then
     _debug "$debug" "Process $session_pid not running"
     printf 'process_dead'
     return 0
@@ -246,12 +237,14 @@ stop_check_prerequisites() {
   printf ''
 }
 
-# Attempt the rewind: read clipboard and send the keystroke sequence.
-# Sets REWIND_RESULT global to the skip reason (non-empty) or empty on success.
-stop_attempt_rewind() {
+# Side effects: sets REWIND_RESULT global — empty on success, "clipboard_empty" or
+# "rewind_failed" on failure. Reads system clipboard and sends keystrokes.
+# Arguments:
+#   $1 - debug: "true"/"false" for debug output
+stop::attempt_rewind() {
   local debug="$1"
 
-  CLIPBOARD_CONTENT=$(stop_read_clipboard)
+  CLIPBOARD_CONTENT=$(stop::read_clipboard)
 
   if [[ -z "$CLIPBOARD_CONTENT" ]]; then
     _debug "$debug" "Clipboard empty — cannot inject enhanced prompt"
@@ -259,7 +252,7 @@ stop_attempt_rewind() {
     return 0
   fi
 
-  if ! stop_send_rewind_sequence "$debug"; then
+  if ! stop::send_rewind_sequence "$debug"; then
     REWIND_RESULT="rewind_failed"
     return 0
   fi
@@ -276,16 +269,16 @@ main() {
   DEBUG=$(_bootstrap_debug)
 
   local SESSION_ID
-  SESSION_ID=$(stop_resolve_session_id)
+  SESSION_ID=$(stop::resolve_session_id)
 
   local SKIP_REASON
-  SKIP_REASON=$(stop_check_prerequisites "$DEBUG" "$SESSION_ID")
+  SKIP_REASON=$(stop::check_prerequisites "$DEBUG" "$SESSION_ID")
   if [[ -n "$SKIP_REASON" ]]; then
     printf '{"continue": true}\n'
     exit 0
   fi
 
-  stop_attempt_rewind "$DEBUG"
+  stop::attempt_rewind "$DEBUG"
   if [[ -n "$REWIND_RESULT" ]]; then
     printf '{"continue": true}\n'
     exit 0
@@ -294,10 +287,6 @@ main() {
   printf '{"continue": true}\n'
   exit 0
 }
-
-###
-### :::: Error handling and entry :::: ##
-###
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   trap 'printf "[better-prompt-stop] Error at line %d\n" "$LINENO" >&2; exit 1' ERR

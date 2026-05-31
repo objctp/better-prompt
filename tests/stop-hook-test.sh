@@ -177,7 +177,7 @@ function test_debug_prefix_format() {
 }
 
 ###
-### stop_resolve_session_id
+### stop::resolve_session_id
 ###
 
 function test_resolve_session_id_from_stdin_json() {
@@ -186,7 +186,7 @@ function test_resolve_session_id_from_stdin_json() {
   local _OUT
   _OUT=$(bashunit::temp_file)
   printf '%s' '{"session_id":"test-sid-456"}' >"$_IN"
-  stop_resolve_session_id <"$_IN" >"$_OUT"
+  stop::resolve_session_id <"$_IN" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "test-sid-456" "$result"
@@ -197,7 +197,7 @@ function test_resolve_session_id_from_env_on_tty() {
   _OUT=$(bashunit::temp_file)
   local _OLD_SID="${CLAUDE_SESSION_ID:-}"
   CLAUDE_SESSION_ID="env-sid-789"
-  stop_resolve_session_id </dev/null >"$_OUT"
+  stop::resolve_session_id </dev/null >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "env-sid-789" "$result"
@@ -209,7 +209,7 @@ function test_resolve_session_id_empty_input() {
   _OUT=$(bashunit::temp_file)
   local _OLD_SID="${CLAUDE_SESSION_ID:-}"
   CLAUDE_SESSION_ID=""
-  stop_resolve_session_id </dev/null >"$_OUT"
+  stop::resolve_session_id </dev/null >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -224,7 +224,7 @@ function test_resolve_session_id_empty_json_session() {
   printf '%s' '{"session_id":""}' >"$_IN"
   local _OLD_SID="${CLAUDE_SESSION_ID:-}"
   CLAUDE_SESSION_ID=""
-  stop_resolve_session_id <"$_IN" >"$_OUT"
+  stop::resolve_session_id <"$_IN" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -232,7 +232,7 @@ function test_resolve_session_id_empty_json_session() {
 }
 
 ###
-### stop_find_session_pid_file
+### stop::find_session_pid_file
 ###
 
 function test_find_session_pid_file_match() {
@@ -243,7 +243,7 @@ function test_find_session_pid_file_match() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_find_session_pid_file "abc-123" >"$_OUT"
+  stop::find_session_pid_file "abc-123" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "$tmpdir/session1.json" "$result"
@@ -259,7 +259,7 @@ function test_find_session_pid_file_no_match() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_find_session_pid_file "abc-123" >"$_OUT"
+  stop::find_session_pid_file "abc-123" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -274,7 +274,7 @@ function test_find_session_pid_file_empty_dir() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_find_session_pid_file "abc-123" >"$_OUT"
+  stop::find_session_pid_file "abc-123" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -292,7 +292,7 @@ function test_find_session_pid_file_multiple() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_find_session_pid_file "target-sid" >"$_OUT"
+  stop::find_session_pid_file "target-sid" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "$tmpdir/b.json" "$result"
@@ -301,7 +301,7 @@ function test_find_session_pid_file_multiple() {
 }
 
 ###
-### stop_extract_pid
+### stop::extract_pid
 ###
 
 function test_extract_pid_valid() {
@@ -310,7 +310,7 @@ function test_extract_pid_valid() {
   printf '%s' '{"sessionId":"test","pid":12345}' >"$tmpdir/ses.json"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_extract_pid "$tmpdir/ses.json" >"$_OUT"
+  stop::extract_pid "$tmpdir/ses.json" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "12345" "$result"
@@ -323,7 +323,7 @@ function test_extract_pid_null() {
   printf '%s' '{"sessionId":"test","pid":null}' >"$tmpdir/ses.json"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_extract_pid "$tmpdir/ses.json" >"$_OUT"
+  stop::extract_pid "$tmpdir/ses.json" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -336,7 +336,7 @@ function test_extract_pid_missing_key() {
   printf '%s' '{"sessionId":"test"}' >"$tmpdir/ses.json"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_extract_pid "$tmpdir/ses.json" >"$_OUT"
+  stop::extract_pid "$tmpdir/ses.json" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -346,7 +346,7 @@ function test_extract_pid_missing_key() {
 function test_extract_pid_empty_path() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_extract_pid "" >"$_OUT"
+  stop::extract_pid "" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -355,7 +355,7 @@ function test_extract_pid_empty_path() {
 function test_extract_pid_nonexistent_file() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_extract_pid "/nonexistent/file.json" >"$_OUT"
+  stop::extract_pid "/nonexistent/file.json" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -367,7 +367,7 @@ function test_extract_pid_string_pid() {
   printf '%s' '{"sessionId":"test","pid":"not-a-number"}' >"$tmpdir/ses.json"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_extract_pid "$tmpdir/ses.json" >"$_OUT"
+  stop::extract_pid "$tmpdir/ses.json" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "not-a-number" "$result"
@@ -375,25 +375,25 @@ function test_extract_pid_string_pid() {
 }
 
 ###
-### stop_is_process_running
+### stop::is_process_running
 ###
 
 function test_is_process_running_current_shell() {
-  stop_is_process_running $$
+  stop::is_process_running $$
   assert_successful_code
 }
 
 function test_is_process_running_nonexistent() {
-  stop_is_process_running 99999999
+  stop::is_process_running 99999999
   assert_general_error
 }
 
 ###
-### stop_read_clipboard (mocked)
+### stop::read_clipboard (mocked)
 ###
 
 function test_read_clipboard_macos_mock() {
-  if [[ "$_IS_MACOS" != true ]]; then
+  if [[ "$IS_MACOS" != true ]]; then
     return 0
   fi
   local mock_dir orig_path
@@ -407,7 +407,7 @@ MOCK
   PATH="$mock_dir:$PATH"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_contains "mocked clipboard content" "$result"
@@ -417,7 +417,7 @@ MOCK
 }
 
 function test_read_clipboard_macos_pbpaste_fails() {
-  if [[ "$_IS_MACOS" != true ]]; then
+  if [[ "$IS_MACOS" != true ]]; then
     return 0
   fi
   local mock_dir orig_path
@@ -431,7 +431,7 @@ MOCK
   PATH="$mock_dir:$PATH"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -441,10 +441,10 @@ MOCK
 }
 
 function test_read_clipboard_linux_xclip_mock() {
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     local _OUT
     _OUT=$(bashunit::temp_file)
-    stop_read_clipboard >"$_OUT"
+    stop::read_clipboard >"$_OUT"
     assert_successful_code
     return 0
   fi
@@ -459,7 +459,7 @@ MOCK
   PATH="$mock_dir:$PATH"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_contains "mocked xclip content" "$result"
@@ -469,7 +469,7 @@ MOCK
 }
 
 function test_read_clipboard_linux_xsel_mock() {
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     assert_successful_code
     return 0
   fi
@@ -484,7 +484,7 @@ echo "mocked xsel content"
 MOCK
   chmod +x "$mock_dir/xsel"
   PATH="$mock_dir"
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   PATH="$orig_path"
   export PATH
   local result
@@ -494,7 +494,7 @@ MOCK
 }
 
 function test_read_clipboard_linux_no_utility() {
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     assert_successful_code
     return 0
   fi
@@ -504,7 +504,7 @@ function test_read_clipboard_linux_no_utility() {
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
   PATH="$mock_dir"
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   PATH="$orig_path"
   export PATH
   local result
@@ -514,24 +514,24 @@ function test_read_clipboard_linux_no_utility() {
 }
 
 ###
-### stop_send_rewind_sequence
+### stop::send_rewind_sequence
 ###
 
 function test_send_rewind_sequence_is_function() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  type -t stop_send_rewind_sequence >"$_OUT" 2>/dev/null || true
+  type -t stop::send_rewind_sequence >"$_OUT" 2>/dev/null || true
   local result
   result=$(cat "$_OUT")
   assert_equals "function" "$result"
 }
 
 function test_send_rewind_sequence_macos_branch() {
-  if [[ "$_IS_MACOS" == true ]]; then
-    stop_send_rewind_sequence "false" || true
+  if [[ "$IS_MACOS" == true ]]; then
+    stop::send_rewind_sequence "false" || true
     assert_successful_code
   else
-    stop_send_rewind_sequence "false" || true
+    stop::send_rewind_sequence "false" || true
     assert_successful_code
   fi
 }
@@ -544,12 +544,12 @@ function test_send_rewind_sequence_tool_not_found() {
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
   PATH="$mock_dir"
-  stop_send_rewind_sequence "true" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" 2>"$_ERR" || true
   PATH="$orig_path"
   export PATH
   local result
   result=$(<"$_ERR")
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     assert_contains "osascript not found" "$result"
   else
     assert_contains "ydotool not found" "$result"
@@ -563,7 +563,7 @@ function test_send_rewind_sequence_success_mocked() {
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     cat >"$mock_dir/osascript" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
@@ -579,7 +579,7 @@ MOCK
   PATH="$mock_dir:$PATH"
   local _ERR
   _ERR=$(bashunit::temp_file)
-  stop_send_rewind_sequence "true" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" 2>"$_ERR" || true
   assert_successful_code
   unset -f sleep
   PATH="$orig_path"
@@ -694,13 +694,13 @@ function test_main_sourced_env_session_empty_dir() {
 }
 
 ###
-### stop_check_prerequisites
+### stop::check_prerequisites
 ###
 
 function test_check_prerequisites_no_session() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "" >"$_OUT"
+  stop::check_prerequisites "false" "" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_equals "no_session" "$reason"
@@ -713,7 +713,7 @@ function test_check_prerequisites_no_pid_file() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "missing-session-999" >"$_OUT"
+  stop::check_prerequisites "false" "missing-session-999" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_equals "no_pid_file" "$reason"
@@ -729,7 +729,7 @@ function test_check_prerequisites_null_pid() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "abc-null-pid" >"$_OUT"
+  stop::check_prerequisites "false" "abc-null-pid" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_equals "no_pid" "$reason"
@@ -745,7 +745,7 @@ function test_check_prerequisites_no_pid_key() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "abc-no-pid" >"$_OUT"
+  stop::check_prerequisites "false" "abc-no-pid" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_equals "no_pid" "$reason"
@@ -761,7 +761,7 @@ function test_check_prerequisites_dead_process() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "abc-dead" >"$_OUT"
+  stop::check_prerequisites "false" "abc-dead" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_equals "process_dead" "$reason"
@@ -777,7 +777,7 @@ function test_check_prerequisites_process_alive() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "abc-alive" >"$_OUT"
+  stop::check_prerequisites "false" "abc-alive" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_empty "$reason"
@@ -793,7 +793,7 @@ function test_check_prerequisites_debug_output() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _ERR
   _ERR=$(bashunit::temp_file)
-  stop_check_prerequisites "true" "dbg-sid" >/dev/null 2>"$_ERR"
+  stop::check_prerequisites "true" "dbg-sid" >/dev/null 2>"$_ERR"
   local result
   result=$(cat "$_ERR")
   assert_contains "Stop hook fired" "$result"
@@ -804,7 +804,7 @@ function test_check_prerequisites_debug_output() {
 function test_check_prerequisites_debug_no_session() {
   local _ERR
   _ERR=$(bashunit::temp_file)
-  stop_check_prerequisites "true" "" >/dev/null 2>"$_ERR"
+  stop::check_prerequisites "true" "" >/dev/null 2>"$_ERR"
   local result
   result=$(cat "$_ERR")
   assert_contains "No session ID found" "$result"
@@ -819,7 +819,7 @@ function test_check_prerequisites_debug_no_pid_file() {
   _OUT=$(bashunit::temp_file)
   local _ERR
   _ERR=$(bashunit::temp_file)
-  stop_check_prerequisites "true" "nonexistent-sid" >"$_OUT" 2>"$_ERR"
+  stop::check_prerequisites "true" "nonexistent-sid" >"$_OUT" 2>"$_ERR"
   local reason
   reason=$(cat "$_OUT")
   local dbg
@@ -840,7 +840,7 @@ function test_check_prerequisites_debug_null_pid() {
   _OUT=$(bashunit::temp_file)
   local _ERR
   _ERR=$(bashunit::temp_file)
-  stop_check_prerequisites "true" "dbg-null-pid" >"$_OUT" 2>"$_ERR"
+  stop::check_prerequisites "true" "dbg-null-pid" >"$_OUT" 2>"$_ERR"
   local reason
   reason=$(cat "$_OUT")
   local dbg
@@ -861,7 +861,7 @@ function test_check_prerequisites_debug_dead_process() {
   _OUT=$(bashunit::temp_file)
   local _ERR
   _ERR=$(bashunit::temp_file)
-  stop_check_prerequisites "true" "dbg-dead" >"$_OUT" 2>"$_ERR"
+  stop::check_prerequisites "true" "dbg-dead" >"$_OUT" 2>"$_ERR"
   local reason
   reason=$(cat "$_OUT")
   local dbg
@@ -882,7 +882,7 @@ function test_check_prerequisites_debug_found_pid() {
   _OUT=$(bashunit::temp_file)
   local _ERR
   _ERR=$(bashunit::temp_file)
-  stop_check_prerequisites "true" "dbg-alive" >"$_OUT" 2>"$_ERR"
+  stop::check_prerequisites "true" "dbg-alive" >"$_OUT" 2>"$_ERR"
   local reason
   reason=$(cat "$_OUT")
   local dbg
@@ -894,14 +894,14 @@ function test_check_prerequisites_debug_found_pid() {
 }
 
 ###
-### stop_attempt_rewind
+### stop::attempt_rewind
 ###
 
 function test_attempt_rewind_empty_clipboard() {
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     cat >"$mock_dir/pbpaste" <<'MOCK'
 #!/usr/bin/env bash
 exit 1
@@ -916,7 +916,7 @@ MOCK
   fi
   PATH="$mock_dir:$PATH"
   REWIND_RESULT=""
-  stop_attempt_rewind "false"
+  stop::attempt_rewind "false"
   assert_equals "clipboard_empty" "$REWIND_RESULT"
   PATH="$orig_path"
   export PATH
@@ -927,7 +927,7 @@ function test_attempt_rewind_rewind_failed() {
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     cat >"$mock_dir/pbpaste" <<'MOCK'
 #!/usr/bin/env bash
 echo "mocked clipboard content"
@@ -941,10 +941,10 @@ MOCK
     chmod +x "$mock_dir/xclip"
   fi
   PATH="$mock_dir:$PATH"
-  _orig_send_rewind=$(declare -f stop_send_rewind_sequence)
-  function stop_send_rewind_sequence() { return 1; }
+  _orig_send_rewind=$(declare -f stop::send_rewind_sequence)
+  function stop::send_rewind_sequence() { return 1; }
   REWIND_RESULT=""
-  stop_attempt_rewind "false"
+  stop::attempt_rewind "false"
   assert_equals "rewind_failed" "$REWIND_RESULT"
   eval "$_orig_send_rewind"
   PATH="$orig_path"
@@ -956,7 +956,7 @@ function test_attempt_rewind_success() {
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     cat >"$mock_dir/pbpaste" <<'MOCK'
 #!/usr/bin/env bash
 echo "mocked clipboard content"
@@ -970,10 +970,10 @@ MOCK
     chmod +x "$mock_dir/xclip"
   fi
   PATH="$mock_dir:$PATH"
-  _orig_send_rewind=$(declare -f stop_send_rewind_sequence)
-  function stop_send_rewind_sequence() { return 0; }
+  _orig_send_rewind=$(declare -f stop::send_rewind_sequence)
+  function stop::send_rewind_sequence() { return 0; }
   REWIND_RESULT=""
-  stop_attempt_rewind "false"
+  stop::attempt_rewind "false"
   assert_empty "$REWIND_RESULT"
   eval "$_orig_send_rewind"
   PATH="$orig_path"
@@ -985,7 +985,7 @@ function test_attempt_rewind_debug_empty_clipboard() {
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     cat >"$mock_dir/pbpaste" <<'MOCK'
 #!/usr/bin/env bash
 exit 1
@@ -1002,7 +1002,7 @@ MOCK
   local _ERR
   _ERR=$(bashunit::temp_file)
   REWIND_RESULT=""
-  stop_attempt_rewind "true" 2>"$_ERR"
+  stop::attempt_rewind "true" 2>"$_ERR"
   assert_equals "clipboard_empty" "$REWIND_RESULT"
   local dbg
   dbg=$(cat "$_ERR")
@@ -1016,7 +1016,7 @@ function test_attempt_rewind_debug_rewind_failed() {
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     cat >"$mock_dir/pbpaste" <<'MOCK'
 #!/usr/bin/env bash
 echo "mocked clipboard content"
@@ -1030,10 +1030,10 @@ MOCK
     chmod +x "$mock_dir/xclip"
   fi
   PATH="$mock_dir:$PATH"
-  _orig_send_rewind=$(declare -f stop_send_rewind_sequence)
-  function stop_send_rewind_sequence() { return 1; }
+  _orig_send_rewind=$(declare -f stop::send_rewind_sequence)
+  function stop::send_rewind_sequence() { return 1; }
   REWIND_RESULT=""
-  stop_attempt_rewind "true"
+  stop::attempt_rewind "true"
   assert_equals "rewind_failed" "$REWIND_RESULT"
   eval "$_orig_send_rewind"
   PATH="$orig_path"
@@ -1060,8 +1060,8 @@ function test_debug_direct_call_false_produces_no_stderr() {
 }
 
 function test_send_rewind_sequence_macos_osascript_not_found() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=true
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=true
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1071,20 +1071,20 @@ function test_send_rewind_sequence_macos_osascript_not_found() {
   _ERR=$(bashunit::temp_file)
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
   PATH="$orig_path"
   export PATH
   local result
   result=$(cat "$_ERR")
   assert_contains "osascript not found" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   rm -rf "$mock_dir"
 }
 
 function test_send_rewind_sequence_macos_osascript_success() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=true
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=true
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1099,12 +1099,12 @@ MOCK
   _ERR=$(bashunit::temp_file)
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR"
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR"
   local result
   result=$(cat "$_ERR")
   assert_contains "Sending rewind sequence via osascript" "$result"
   assert_contains "Rewind sequence sent" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   PATH="$orig_path"
   export PATH
@@ -1112,8 +1112,8 @@ MOCK
 }
 
 function test_send_rewind_sequence_macos_osascript_fails() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=true
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=true
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1128,11 +1128,11 @@ MOCK
   _ERR=$(bashunit::temp_file)
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
   local result
   result=$(cat "$_ERR")
   assert_contains "osascript failed" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   PATH="$orig_path"
   export PATH
@@ -1140,8 +1140,8 @@ MOCK
 }
 
 function test_send_rewind_sequence_linux_ydotool_success() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1156,12 +1156,12 @@ MOCK
   _ERR=$(bashunit::temp_file)
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR"
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR"
   local result
   result=$(cat "$_ERR")
   assert_contains "Sending rewind sequence via ydotool" "$result"
   assert_contains "Rewind sequence sent" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   PATH="$orig_path"
   export PATH
@@ -1169,8 +1169,8 @@ MOCK
 }
 
 function test_send_rewind_sequence_linux_ydotool_ctrl_v_fails() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1185,11 +1185,11 @@ MOCK
   _ERR=$(bashunit::temp_file)
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
   local result
   result=$(cat "$_ERR")
   assert_contains "ydotool Ctrl+V failed" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   PATH="$orig_path"
   export PATH
@@ -1197,8 +1197,8 @@ MOCK
 }
 
 function test_send_rewind_sequence_linux_ydotool_enter_fails() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1216,11 +1216,11 @@ MOCK
   _ERR=$(bashunit::temp_file)
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
   local result
   result=$(cat "$_ERR")
   assert_contains "ydotool Enter failed" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   PATH="$orig_path"
   export PATH
@@ -1228,8 +1228,8 @@ MOCK
 }
 
 function test_send_rewind_sequence_linux_no_ydotool() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1239,10 +1239,10 @@ function test_send_rewind_sequence_linux_no_ydotool() {
   local _OUT
   _OUT=$(bashunit::temp_file)
   PATH="$mock_dir:$PATH"
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
   local result
   result=$(cat "$_ERR")
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   PATH="$orig_path"
   export PATH
@@ -1251,8 +1251,8 @@ function test_send_rewind_sequence_linux_no_ydotool() {
 }
 
 function test_send_rewind_sequence_debug_messages_linux_ydotool_not_found() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   function sleep() { :; }
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
@@ -1262,10 +1262,10 @@ function test_send_rewind_sequence_debug_messages_linux_ydotool_not_found() {
   local _OUT
   _OUT=$(bashunit::temp_file)
   PATH="$mock_dir:$PATH"
-  stop_send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
+  stop::send_rewind_sequence "true" >"$_OUT" 2>"$_ERR" || true
   local result
   result=$(cat "$_ERR")
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   unset -f sleep
   PATH="$orig_path"
   export PATH
@@ -1275,8 +1275,8 @@ function test_send_rewind_sequence_debug_messages_linux_ydotool_not_found() {
 }
 
 function test_read_clipboard_linux_xclip_forced() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
@@ -1288,23 +1288,23 @@ MOCK
   PATH="$mock_dir:$PATH"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_contains "forced xclip content" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   PATH="$orig_path"
   export PATH
   rm -rf "$mock_dir"
 }
 
 function test_read_clipboard_linux_xsel_forced() {
-  if [[ "$_IS_MACOS" == true ]]; then
+  if [[ "$IS_MACOS" == true ]]; then
     assert_successful_code
     return 0
   fi
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
@@ -1316,29 +1316,29 @@ MOCK
   PATH="$mock_dir:$PATH"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_contains "forced xsel content" "$result"
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   PATH="$orig_path"
   export PATH
   rm -rf "$mock_dir"
 }
 
 function test_read_clipboard_linux_no_utility_forced() {
-  local orig_macos="$_IS_MACOS"
-  _IS_MACOS=false
+  local orig_macos="$IS_MACOS"
+  IS_MACOS=false
   local mock_dir orig_path
   mock_dir=$(mktemp -d)
   orig_path="$PATH"
   local _OUT
   _OUT=$(bashunit::temp_file)
   PATH="$mock_dir"
-  stop_read_clipboard >"$_OUT"
+  stop::read_clipboard >"$_OUT"
   local result
   result=$(<"$_OUT")
-  _IS_MACOS="$orig_macos"
+  IS_MACOS="$orig_macos"
   PATH="$orig_path"
   export PATH
   rm -rf "$mock_dir"
@@ -1369,7 +1369,7 @@ function test_debug_direct_false_no_stderr_file() {
 }
 
 ###
-### stop_check_prerequisites full path (coverage for line 187 fi)
+### stop::check_prerequisites full path (coverage for line 187 fi)
 ###
 
 function test_check_prerequisites_full_path_dead_process_direct() {
@@ -1380,7 +1380,7 @@ function test_check_prerequisites_full_path_dead_process_direct() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "full-sid" >"$_OUT"
+  stop::check_prerequisites "false" "full-sid" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_equals "process_dead" "$reason"
@@ -1396,7 +1396,7 @@ function test_check_prerequisites_full_path_alive_direct() {
   ACTIVE_SESSIONS_DIR="$tmpdir"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  stop_check_prerequisites "false" "alive-full-sid" >"$_OUT"
+  stop::check_prerequisites "false" "alive-full-sid" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
   assert_empty "$reason"
