@@ -395,11 +395,16 @@ enhance_format_response() {
   local corrected_prompt="$3"
   local working_prompt="$4"
   local enhanced_prompt="$5"
+  local correction="$6"
+  local translation="$7"
+  local enhancement="$8"
 
   if [[ "$debug_mode" == "true" ]]; then
-    local debug_msg
-    debug_msg=$(printf '[Better Prompt Debug]\nOriginal:   %s\nCorrected:  %s\nTranslated: %s\nEnhanced:   %s' \
-      "$original_prompt" "$corrected_prompt" "$working_prompt" "$enhanced_prompt")
+    local debug_msg="[Better Prompt Debug]\nOriginal:   $original_prompt"
+    [[ "$correction" == "true" ]] && debug_msg+="\nCorrected:  $corrected_prompt"
+    [[ "$translation" == "true" ]] && debug_msg+="\nTranslated: $working_prompt"
+    [[ "$enhancement" == "true" ]] && debug_msg+="\nEnhanced:   $enhanced_prompt"
+    debug_msg=$(printf '%b' "$debug_msg")
     local escaped_debug
     escaped_debug=$(_json_escape "$debug_msg")
     printf '{"decision": "block", "reason": %s, "suppressOutput": false}\n' "$escaped_debug"
@@ -517,7 +522,8 @@ enhance_finalize() {
   fi
 
   enhance_write_sentinel "$SENTINEL" "$final_prompt"
-  enhance_format_response "$DEBUG" "$original_prompt" "$CORRECTED_PROMPT" "$WORKING_PROMPT" "$final_prompt"
+  enhance_format_response "$DEBUG" "$original_prompt" "$CORRECTED_PROMPT" "$WORKING_PROMPT" "$final_prompt" \
+    "$CORRECTION" "$TRANSLATION" "$ENHANCEMENT"
   enhance_copy_to_clipboard "$final_prompt"
   _debug "Original prompt blocked; final prompt copied to clipboard for rewind"
   enhance_spawn_stop_hook "$session_id"
