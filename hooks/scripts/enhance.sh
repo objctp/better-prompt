@@ -251,6 +251,8 @@ Prompt: $working_prompt"
     # Extract inner result from --output-format json wrapper
     local inner_result
     inner_result=$(printf '%s' "$correction_result" | jq -r '.result // empty' 2>/dev/null) || inner_result=""
+    # Strip markdown fences and blank lines from the agent's raw output
+    inner_result=$(printf '%s' "$inner_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
     # Fallback: if .result is empty, treat the raw output as the correction JSON
     [[ -z "$inner_result" ]] && inner_result=$(printf '%s' "$correction_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
 
@@ -287,6 +289,8 @@ Text: $working_prompt"
   if [[ -n "$translation_result" ]] && command -v jq &>/dev/null; then
     local translated_text
     translated_text=$(printf '%s' "$translation_result" | jq -r '.result // empty' 2>/dev/null) || translated_text=""
+    # Strip markdown fences from the agent's raw output
+    translated_text=$(printf '%s' "$translated_text" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
     # Fallback: if .result is empty, use raw output
     if [[ -z "$translated_text" ]]; then
       translated_text="$translation_result"
@@ -335,6 +339,7 @@ $working_prompt"
   local enhanced_result=""
   if [[ -n "$enhance_json" ]] && command -v jq &>/dev/null; then
     enhanced_result=$(printf '%s' "$enhance_json" | jq -r '.result // empty' 2>/dev/null) || enhanced_result=""
+    enhanced_result=$(printf '%s' "$enhanced_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
   else
     enhanced_result="$enhance_json"
   fi
