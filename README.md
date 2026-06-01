@@ -146,7 +146,7 @@ The plugin registers a `UserPromptSubmit` hook (type: `command`) that runs `hook
 2. **Kill switch** — if `enabled: false`, pass through immediately
 3. **Correction** — invoke the `prompt-correction` agent via `claude -p --agent`; parse returned JSON for corrected text and mistake list
 4. **Translation** — invoke the `prompt-translation` agent (if enabled); non-English prompts are translated to English
-5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent --resume`; uses a persistent session so the model sees previously enhanced prompts as context
+5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent`; injects the last 5 final prompts from a session context file as prior context for continuity
 6. **Audit** — append one NDJSON line to `.claude/prompts.json` in the project root
 7. **Determine final prompt** — use the last enabled stage's output
 8. **Write sentinel** — store content hash to prevent re-processing the enhanced prompt on rewind

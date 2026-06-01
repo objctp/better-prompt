@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'rm -f \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-sentinel\" \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-stop-pid\"'",
+            "command": "bash -c 'rm -f \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-sentinel\" \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-stop-pid\" \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-enhance-session\" \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-context\"'",
             "statusMessage": "Cleaning up...",
             "timeout": 30
           }

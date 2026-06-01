@@ -66,6 +66,38 @@ _atomic_write() {
   return 0
 }
 
+# Extract the last N prior prompts from the context file as a numbered list.
+# Prints nothing when file is missing or count is 0.
+enhance::extract_prior_context() {
+  local context_file="$1"
+  local count="$2"
+
+  if [[ ! -f "$context_file" ]] || [[ "$count" -eq 0 ]]; then
+    return 0
+  fi
+
+  tail -n "$count" "$context_file" |
+    awk 'NF {printf "%d. \"%s\"\n", ++n, $0}' 2>/dev/null
+  return 0
+}
+
+# Append a final prompt to the context file and trim to the last N lines.
+enhance::append_prior_context() {
+  local context_file="$1"
+  local count="$2"
+  local enhanced_text="$3"
+
+  [[ -z "$enhanced_text" ]] && return 0
+
+  mkdir -p "$(dirname "$context_file")"
+  printf '%s\n' "$enhanced_text" >>"$context_file"
+
+  # Trim to last N lines (sliding window)
+  local trimmed
+  trimmed=$(tail -n "$count" "$context_file") && printf '%s\n' "$trimmed" >"$context_file"
+  return 0
+}
+
 # macOS md5 prints only the digest; GNU md5sum appends the filename
 _md5() {
   printf '%s' "$1" | (md5 2>/dev/null || md5sum 2>/dev/null | cut -c1-32)
@@ -227,47 +259,37 @@ Text: $working_prompt"
 enhance::run_enhancement_stage() {
   local working_prompt="$1"
   local enhancement_model="$2"
-  local enhance_session_file="$3"
+  local context_file="$3"
+  local context_count="$4"
 
   _debug "Running enhancement with model: $enhancement_model"
 
-  local resume_args=()
-  if [[ -f "$enhance_session_file" ]]; then
-    local stored_id
-    stored_id=$(cat "$enhance_session_file" 2>/dev/null || true)
-    if [[ -n "$stored_id" ]]; then
-      resume_args=(--resume "$stored_id")
-      _debug "Resuming enhancement session: $stored_id"
-    fi
+  local prior_context=""
+  prior_context=$(enhance::extract_prior_context "$context_file" "$context_count")
+
+  local enhance_prompt="Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes."
+
+  if [[ -n "$prior_context" ]]; then
+    enhance_prompt+="
+
+Prior prompts in this session:
+$prior_context"
   fi
 
-  local enhance_prompt="Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes.
+  enhance_prompt+="
 
 Prompt:
 $working_prompt"
 
   local enhance_json=""
-  enhance_json=$(printf '%s' "$enhance_prompt" | BETTER_PROMPT_CHILD=1 claude -p "${resume_args[@]}" --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
-    local _resume_err="$enhance_json"
-    if [[ -f "$enhance_session_file" ]]; then
-      _debug "Resume failed, retrying without session (resume error: $_resume_err)"
-      rm -f "$enhance_session_file"
-      enhance_json=$(printf '%s' "$enhance_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
-        _warn "Enhancement stage failed — resume error: $_resume_err; retry error: $enhance_json"
-        enhance_json=""
-      }
-    else
-      _warn "Enhancement stage failed: $_resume_err"
-      enhance_json=""
-    fi
+  enhance_json=$(printf '%s' "$enhance_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
+    _warn "Enhancement stage failed: $enhance_json"
+    enhance_json=""
   }
 
   local enhanced_result=""
   if [[ -n "$enhance_json" ]] && command -v jq &>/dev/null; then
     enhanced_result=$(printf '%s' "$enhance_json" | jq -r '.result // empty' 2>/dev/null) || enhanced_result=""
-    local enhance_sid
-    enhance_sid=$(printf '%s' "$enhance_json" | jq -r '.session_id // empty' 2>/dev/null) || enhance_sid=""
-    [[ -n "$enhance_sid" ]] && _atomic_write "$enhance_session_file" "$enhance_sid"
   else
     enhanced_result="$enhance_json"
   fi
@@ -440,7 +462,7 @@ enhance::load_settings() {
   AUDIT=$(_get_setting "audit" "true")
   AUDIT_LOG="${CLAUDE_PROJECT_DIR:-.}/.claude/prompts.json"
   SENTINEL="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-sentinel"
-  ENHANCE_SESSION_FILE="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-enhance-session"
+  CONTEXT_FILE="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-context"
 
   # Validate model names look reasonable (non-empty, valid characters only).
   # We do not restrict to a hardcoded set — any valid model identifier is accepted.
@@ -501,7 +523,6 @@ enhance::run_pipeline() {
   local translation_model="$5"
   local enhancement="$6"
   local enhancement_model="$7"
-  local enhance_session_file="$8"
 
   _pl_st[CORRECTIONS_JSON]="[]"
   _pl_st[MISTAKE_NATURE_JSON]="[]"
@@ -539,7 +560,7 @@ enhance::run_pipeline() {
 
   _pl_st[ENHANCED_PROMPT]="${_pl_st[WORKING_PROMPT]}"
   if [[ "$enhancement" == "true" ]]; then
-    _pl_st[ENHANCED_PROMPT]=$(enhance::run_enhancement_stage "${_pl_st[WORKING_PROMPT]}" "$enhancement_model" "$enhance_session_file")
+    _pl_st[ENHANCED_PROMPT]=$(enhance::run_enhancement_stage "${_pl_st[WORKING_PROMPT]}" "$enhancement_model" "$CONTEXT_FILE" 5)
   fi
   return 0
 }
@@ -550,6 +571,8 @@ enhance::finalize() {
   local session_id="$3"
 
   local final_prompt="${_fn_st[ENHANCED_PROMPT]:-${_fn_st[WORKING_PROMPT]}}"
+
+  enhance::append_prior_context "$CONTEXT_FILE" 5 "$final_prompt"
 
   if [[ "$AUDIT" == "true" ]] && command -v jq &>/dev/null; then
     enhance::write_audit "$AUDIT_LOG" "$original_prompt" "${_fn_st[CORRECTED_PROMPT]}" "$final_prompt" \
@@ -584,6 +607,9 @@ main() {
   _parse_config
   enhance::load_settings
 
+  # Clean up orphaned session file from previous --resume mechanism
+  rm -f "${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-enhance-session"
+
   local SESSION_ID
   SESSION_ID=$(enhance::resolve_session_id "$STDIN_PAYLOAD")
 
@@ -605,8 +631,7 @@ main() {
   enhance::run_pipeline _PS \
     "$CORRECTION" "$CORRECTION_MODEL" \
     "$TRANSLATION" "$TRANSLATION_MODEL" \
-    "$ENHANCEMENT" "$ENHANCEMENT_MODEL" \
-    "$ENHANCE_SESSION_FILE"
+    "$ENHANCEMENT" "$ENHANCEMENT_MODEL"
 
   enhance::finalize _PS "$ORIGINAL_PROMPT" "$SESSION_ID"
 
