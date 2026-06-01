@@ -1,7 +1,7 @@
 ---
 name: better-prompt:logs
 description: Display recent audit log entries from the better-prompt plugin
-argument-hint: "[count]"
+argument-hint: "[count|--clear]"
 allowed-tools:
   - Read
   - Bash
@@ -14,6 +14,38 @@ Display recent audit log entries from the better-prompt plugin.
 ## Audit Log Location
 
 The audit log is located at `<project-root>/.claude/prompts.json`
+
+## Arguments
+
+The command accepts a single optional argument:
+
+| Argument | Description |
+|----------|-------------|
+| `N` (number) | Display the last N entries |
+| `--clear` | Delete the audit log file |
+| *(none)* | Display the last entry |
+
+## Clearing Logs
+
+When the user passes `--clear`:
+
+```bash
+rm -f .claude/prompts.json
+```
+
+Confirm the action:
+
+```
+✓ Audit log cleared.
+```
+
+If the file does not exist, inform the user:
+
+```
+No audit log file found — nothing to clear.
+```
+
+**Never delete the log automatically.** Logs persist across sessions and are only removed on explicit `--clear`.
 
 ## Reading the Log
 
@@ -47,12 +79,6 @@ Display each log entry in a readable format:
 **Models Used:** correction=haiku, translation=haiku, enhancement=sonnet
 ```
 
-## Arguments
-
-If the user provides a count (e.g., `/better-prompt:logs 5`), display that many recent entries.
-
-Default: Show the last entry if count is not specified.
-
 ## Handling Empty/Missing Logs
 
 If the log file doesn't exist or is empty:
@@ -70,6 +96,5 @@ Show summary statistics if available:
 ## Tips
 
 - Use `jq` for powerful filtering and analysis of the JSON log
-- The log grows indefinitely — consider archiving old entries if needed
 - Punctuation corrections are NOT classified as mistakes (by design)
 - Original prompts are logged BEFORE any correction or enhancement

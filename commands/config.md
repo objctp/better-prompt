@@ -38,15 +38,15 @@ Explain each setting and its purpose:
 | `enhancement` | boolean | `false` | Enable prompt enhancement stage |
 | `enhancement_model` | string | `sonnet` | Model to use for enhancement (haiku, sonnet, opus) |
 | `audit` | boolean | `true` | Enable audit logging of original prompts |
-| `debug_mode` | boolean | `false` | Show intermediate steps (correction, enhancement) |
+| `verbose` | boolean | `false` | Show intermediate steps (correction, enhancement) |
 
 ## Interactive Configuration
 
-If the user provides arguments (e.g., `/better-prompt:config debug_mode true`), update that specific setting.
+If the user provides arguments (e.g., `/better-prompt:config verbose true`), update that specific setting.
 
 If no arguments provided, ask the user which setting they want to configure:
 
-1. "Which setting would you like to configure? (enabled, correction, correction_model, translation, translation_model, enhancement, enhancement_model, audit, debug_mode)"
+1. "Which setting would you like to configure? (enabled, correction, correction_model, translation, translation_model, enhancement, enhancement_model, audit, verbose)"
 2. "What value would you like to set it to?"
 
 ## Updating Settings
@@ -63,7 +63,7 @@ translation_model: haiku
 enhancement: false
 enhancement_model: sonnet
 audit: true
-debug_mode: false
+verbose: false
 ---
 ```
 
@@ -74,7 +74,7 @@ The file can contain additional content below the frontmatter (user notes, etc.)
 Suggest quick actions to the user:
 - "View current settings" - Read and display the settings file
 - "Reset to defaults" - Create default settings file
-- "Enable debug mode" - Set debug_mode to true
+- "Enable verbose mode" - Set verbose to true
 - "Disable audit logging" - Set audit to false
 - "Change correction model" - Update correction_model
 - "Enable translation" - Set translation to true

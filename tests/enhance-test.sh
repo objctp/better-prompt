@@ -346,12 +346,12 @@ function test_get_setting_empty_default() {
 ###
 
 function test_parse_config_reads_front_matter() {
-  printf '%s\n' '---' 'enabled: true' 'debug_mode: false' '---' >"$CONFIG"
+  printf '%s\n' '---' 'enabled: true' 'verbose: false' '---' >"$CONFIG"
   unset _CFG 2>/dev/null || true
   declare -gA _CFG=()
   _parse_config
   assert_equals "true" "${_CFG[enabled]}"
-  assert_equals "false" "${_CFG[debug_mode]}"
+  assert_equals "false" "${_CFG[verbose]}"
 }
 
 function test_parse_config_strips_comments() {
@@ -570,17 +570,14 @@ function test_resolve_session_id_invalid_format() {
 }
 
 function test_resolve_session_id_empty_input() {
-  local orig_home="$HOME"
   local orig_session="${CLAUDE_SESSION_ID:-}"
-  HOME="/nonexistent/home"
   CLAUDE_SESSION_ID=""
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::resolve_session_id '' >"$_OUT"
+  enhance::resolve_session_id '' >"$_OUT" 2>/dev/null
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
-  HOME="$orig_home"
   CLAUDE_SESSION_ID="$orig_session"
 }
 
@@ -593,45 +590,6 @@ function test_resolve_session_id_valid_alphanumeric() {
   local result
   result=$(cat "$_OUT")
   assert_equals "abc123_def-456" "$result"
-  CLAUDE_SESSION_ID="$orig_session"
-}
-
-function test_resolve_session_id_directory_lookup_macos() {
-  if [[ "${IS_MACOS:-}" != true ]]; then
-    return 0
-  fi
-  local orig_home="$HOME"
-  local orig_session="${CLAUDE_SESSION_ID:-}"
-  local tmpdir
-  tmpdir=$(mktemp -d)
-  local session_dir="$tmpdir/.claude/session-env"
-  mkdir -p "$session_dir/my-session-xyz"
-  touch "$session_dir/my-session-xyz"
-  HOME="$tmpdir"
-  CLAUDE_SESSION_ID=""
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  enhance::resolve_session_id '' >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_equals "my-session-xyz" "$result"
-  HOME="$orig_home"
-  CLAUDE_SESSION_ID="$orig_session"
-  rm -rf "$tmpdir"
-}
-
-function test_resolve_session_id_directory_lookup_fallback() {
-  local orig_home="$HOME"
-  local orig_session="${CLAUDE_SESSION_ID:-}"
-  HOME="/nonexistent/path/no/sessions/here"
-  CLAUDE_SESSION_ID=""
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  enhance::resolve_session_id '' >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_empty "$result"
-  HOME="$orig_home"
   CLAUDE_SESSION_ID="$orig_session"
 }
 
@@ -1102,18 +1060,18 @@ function test_main_sourced_all_stages_disabled() {
   printf '%s\n' '---' 'enabled: true' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
   local result
   result=$(printf '%s' '{"prompt":"hello world","session_id":"ses6"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="ses6" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>/dev/null || true)
-  assert_contains "block" "$result"
+  assert_contains "continue" "$result"
   rm -rf "$tmpdir"
   _teardown_mock_env
 }
 
-function test_main_sourced_debug_mode_output() {
+function test_main_sourced_verbose_output() {
   _setup_mock_env
   local tmpdir tmpcfg
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/.claude"
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
-  printf '%s\n' '---' 'enabled: true' 'debug_mode: true' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
+  printf '%s\n' '---' 'enabled: true' 'verbose: true' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
   local result
   result=$(printf '%s' '{"prompt":"hello world","session_id":"ses7"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="ses7" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>&1 || true)
   assert_contains "block" "$result"
@@ -1212,7 +1170,7 @@ function test_load_settings_from_config() {
   local tmpdir tmpcfg
   tmpdir=$(mktemp -d)
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
-  printf '%s\n' '---' 'enabled: false' 'debug_mode: true' 'correction: false' 'correction_model: gpt-4' 'enhancement: true' 'enhancement_model: opus' 'translation: true' 'translation_model: deepseek' 'audit: false' >"$tmpcfg"
+  printf '%s\n' '---' 'enabled: false' 'verbose: true' 'correction: false' 'correction_model: gpt-4' 'enhancement: true' 'enhancement_model: opus' 'translation: true' 'translation_model: deepseek' 'audit: false' >"$tmpcfg"
   local CONFIG_ORIG="$CONFIG"
   CONFIG="$tmpcfg"
   unset _CFG 2>/dev/null || true
@@ -1260,7 +1218,7 @@ function test_load_settings_uses_project_dir() {
 function test_should_skip_when_disabled() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "false" "hello" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  enhance::should_skip "false" "hello" "ses1" "/tmp/no-sentinel" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "disabled" "$result"
@@ -1269,7 +1227,7 @@ function test_should_skip_when_disabled() {
 function test_should_skip_empty_prompt() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "true" "" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  enhance::should_skip "true" "" "ses1" "/tmp/no-sentinel" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "empty_input" "$result"
@@ -1278,7 +1236,7 @@ function test_should_skip_empty_prompt() {
 function test_should_skip_empty_session() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "true" "hello" "" "/tmp/no-sentinel" >"$_OUT"
+  enhance::should_skip "true" "hello" "" "/tmp/no-sentinel" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "empty_input" "$result"
@@ -1287,7 +1245,7 @@ function test_should_skip_empty_session() {
 function test_should_skip_directive_slash() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "true" "/help" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  enhance::should_skip "true" "/help" "ses1" "/tmp/no-sentinel" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "directive" "$result"
@@ -1296,7 +1254,7 @@ function test_should_skip_directive_slash() {
 function test_should_skip_directive_bang() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "true" "!cmd" "ses1" "/tmp/no-sentinel" >"$_OUT"
+  enhance::should_skip "true" "!cmd" "ses1" "/tmp/no-sentinel" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "directive" "$result"
@@ -1314,7 +1272,7 @@ function test_should_skip_sentinel_match() {
   _atomic_write "$sentinel" "$hash"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "true" "hello world" "ses1" "$sentinel" >"$_OUT"
+  enhance::should_skip "true" "hello world" "ses1" "$sentinel" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "sentinel" "$result"
@@ -1324,7 +1282,7 @@ function test_should_skip_sentinel_match() {
 function test_should_skip_no_skip_when_enabled() {
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "true" "hello world" "ses1" "/tmp/no-sentinel-here" >"$_OUT"
+  enhance::should_skip "true" "hello world" "ses1" "/tmp/no-sentinel-here" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
@@ -1335,11 +1293,29 @@ function test_should_skip_no_skip_normal_prompt() {
   tmpdir=$(mktemp -d)
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::should_skip "true" "fix this bug" "abc-123" "$tmpdir/no-sentinel" >"$_OUT"
+  enhance::should_skip "true" "fix this bug" "abc-123" "$tmpdir/no-sentinel" "true" "false" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_empty "$result"
   rm -rf "$tmpdir"
+}
+
+function test_should_skip_no_stages_active() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance::should_skip "true" "hello world" "ses1" "/tmp/no-sentinel" "false" "false" "false" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "no_stages" "$result"
+}
+
+function test_should_skip_one_stage_active_not_skipped() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  enhance::should_skip "true" "hello world" "ses1" "/tmp/no-sentinel" "false" "false" "true" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_empty "$result"
 }
 
 ###
@@ -1353,13 +1329,18 @@ function test_run_pipeline_all_disabled() {
   mkdir -p "$tmpdir/.claude"
   local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
 
-  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
-  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
-  enhance::run_pipeline "hello world" "false" "haiku" "false" "haiku" "false" "sonnet" "$sess_file"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="hello world"
+  _PS[CORRECTED_PROMPT]=""
+  _PS[ENHANCED_PROMPT]=""
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
+  enhance::run_pipeline _PS "false" "haiku" "false" "haiku" "false" "sonnet" "$sess_file"
 
-  assert_equals "hello world" "$CORRECTED_PROMPT"
-  assert_equals "hello world" "$ENHANCED_PROMPT"
-  assert_equals "hello world" "$WORKING_PROMPT"
+  assert_equals "hello world" "${_PS[CORRECTED_PROMPT]}"
+  assert_equals "hello world" "${_PS[ENHANCED_PROMPT]}"
+  assert_equals "hello world" "${_PS[WORKING_PROMPT]}"
 
   rm -rf "$tmpdir"
   _teardown_mock_env
@@ -1372,12 +1353,17 @@ function test_run_pipeline_correction_enabled() {
   mkdir -p "$tmpdir/.claude"
   local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
 
-  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
-  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
-  enhance::run_pipeline "hallo world" "true" "haiku" "false" "haiku" "false" "sonnet" "$sess_file"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="hallo world"
+  _PS[CORRECTED_PROMPT]=""
+  _PS[ENHANCED_PROMPT]=""
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
+  enhance::run_pipeline _PS "true" "haiku" "false" "haiku" "false" "sonnet" "$sess_file"
 
-  assert_not_empty "$CORRECTED_PROMPT"
-  assert_not_empty "$WORKING_PROMPT"
+  assert_not_empty "${_PS[CORRECTED_PROMPT]}"
+  assert_not_empty "${_PS[WORKING_PROMPT]}"
 
   rm -rf "$tmpdir"
   _teardown_mock_env
@@ -1390,11 +1376,16 @@ function test_run_pipeline_translation_enabled() {
   mkdir -p "$tmpdir/.claude"
   local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
 
-  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
-  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
-  enhance::run_pipeline "bonjour le monde" "false" "haiku" "true" "haiku" "false" "sonnet" "$sess_file"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="bonjour le monde"
+  _PS[CORRECTED_PROMPT]=""
+  _PS[ENHANCED_PROMPT]=""
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
+  enhance::run_pipeline _PS "false" "haiku" "true" "haiku" "false" "sonnet" "$sess_file"
 
-  assert_not_empty "$WORKING_PROMPT"
+  assert_not_empty "${_PS[WORKING_PROMPT]}"
 
   rm -rf "$tmpdir"
   _teardown_mock_env
@@ -1407,11 +1398,16 @@ function test_run_pipeline_enhancement_enabled() {
   mkdir -p "$tmpdir/.claude"
   local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
 
-  WORKING_PROMPT="" CORRECTED_PROMPT="" ENHANCED_PROMPT=""
-  CORRECTIONS_JSON="[]" MISTAKE_NATURE_JSON="[]"
-  enhance::run_pipeline "hello world" "false" "haiku" "false" "haiku" "true" "sonnet" "$sess_file"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="hello world"
+  _PS[CORRECTED_PROMPT]=""
+  _PS[ENHANCED_PROMPT]=""
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
+  enhance::run_pipeline _PS "false" "haiku" "false" "haiku" "true" "sonnet" "$sess_file"
 
-  assert_not_empty "$ENHANCED_PROMPT"
+  assert_not_empty "${_PS[ENHANCED_PROMPT]}"
 
   rm -rf "$tmpdir"
   _teardown_mock_env
@@ -1427,7 +1423,7 @@ function test_finalize_writes_sentinel_and_response() {
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/.claude"
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
-  printf '%s\n' '---' 'enabled: true' 'debug_mode: false' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
+  printf '%s\n' '---' 'enabled: true' 'verbose: false' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
 
   local CONFIG_ORIG="$CONFIG"
   CONFIG="$tmpcfg"
@@ -1439,11 +1435,13 @@ function test_finalize_writes_sentinel_and_response() {
   _parse_config
   enhance::load_settings
 
-  WORKING_PROMPT="hello world"
-  CORRECTED_PROMPT="hello world"
-  ENHANCED_PROMPT="enhanced hello"
-  CORRECTIONS_JSON="[]"
-  MISTAKE_NATURE_JSON="[]"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="hello world"
+  _PS[CORRECTED_PROMPT]="hello world"
+  _PS[ENHANCED_PROMPT]="enhanced hello"
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
   CORRECTION="false"
   CORRECTION_MODEL="haiku"
   ENHANCEMENT="false"
@@ -1454,7 +1452,7 @@ function test_finalize_writes_sentinel_and_response() {
   local sentinel="$tmpdir/.claude/.better-prompt-sentinel"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::finalize "hello world" "test-session-123" >"$_OUT" 2>/dev/null || true
+  enhance::finalize _PS "hello world" "test-session-123" >"$_OUT" 2>/dev/null || true
   local response
   response=$(cat "$_OUT")
 
@@ -1473,7 +1471,7 @@ function test_finalize_writes_audit_when_enabled() {
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/.claude"
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
-  printf '%s\n' '---' 'enabled: true' 'debug_mode: false' 'correction: false' 'enhancement: false' 'translation: false' 'audit: true' >"$tmpcfg"
+  printf '%s\n' '---' 'enabled: true' 'verbose: false' 'correction: false' 'enhancement: false' 'translation: false' 'audit: true' >"$tmpcfg"
 
   local CONFIG_ORIG="$CONFIG"
   CONFIG="$tmpcfg"
@@ -1485,11 +1483,13 @@ function test_finalize_writes_audit_when_enabled() {
   _parse_config
   enhance::load_settings
 
-  WORKING_PROMPT="hello world"
-  CORRECTED_PROMPT="hello world"
-  ENHANCED_PROMPT="enhanced hello"
-  CORRECTIONS_JSON="[]"
-  MISTAKE_NATURE_JSON="[]"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="hello world"
+  _PS[CORRECTED_PROMPT]="hello world"
+  _PS[ENHANCED_PROMPT]="enhanced hello"
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
   CORRECTION="false"
   CORRECTION_MODEL="haiku"
   ENHANCEMENT="false"
@@ -1497,7 +1497,7 @@ function test_finalize_writes_audit_when_enabled() {
   TRANSLATION="false"
   TRANSLATION_MODEL="haiku"
 
-  enhance::finalize "hello world" "test-session-456" 2>/dev/null || true
+  enhance::finalize _PS "hello world" "test-session-456" 2>/dev/null || true
 
   local audit_log="$tmpdir/.claude/prompts.json"
   assert_file_exists "$audit_log"
@@ -1517,35 +1517,41 @@ function test_finalize_writes_audit_when_enabled() {
 
 function test_run_correction_sets_globals() {
   _setup_stage_mock_env
-  WORKING_PROMPT=""
-  CORRECTED_PROMPT=""
-  CORRECTIONS_JSON="[]"
-  MISTAKE_NATURE_JSON="[]"
-  enhance::run_correction "hallo world" "haiku"
-  assert_not_empty "$CORRECTED_PROMPT"
-  assert_not_empty "$WORKING_PROMPT"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="hallo world"
+  _PS[CORRECTED_PROMPT]=""
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
+  enhance::run_correction _PS "haiku"
+  assert_not_empty "${_PS[CORRECTED_PROMPT]}"
+  assert_not_empty "${_PS[WORKING_PROMPT]}"
   _teardown_mock_env
 }
 
 function test_run_correction_parses_response() {
   _setup_stage_mock_env
-  WORKING_PROMPT=""
-  CORRECTED_PROMPT=""
-  CORRECTIONS_JSON="[]"
-  MISTAKE_NATURE_JSON="[]"
-  enhance::run_correction "hallo werld" "haiku"
-  assert_contains "corrected" "$CORRECTED_PROMPT"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="hallo werld"
+  _PS[CORRECTED_PROMPT]=""
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
+  enhance::run_correction _PS "haiku"
+  assert_contains "corrected" "${_PS[CORRECTED_PROMPT]}"
   _teardown_mock_env
 }
 
 function test_run_correction_updates_working_prompt() {
   _setup_stage_mock_env
-  WORKING_PROMPT=""
-  CORRECTED_PROMPT=""
-  CORRECTIONS_JSON="[]"
-  MISTAKE_NATURE_JSON="[]"
-  enhance::run_correction "some prompt" "haiku"
-  assert_equals "$WORKING_PROMPT" "$CORRECTED_PROMPT"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="some prompt"
+  _PS[CORRECTED_PROMPT]=""
+  _PS[CORRECTIONS_JSON]="[]"
+  _PS[MISTAKE_NATURE_JSON]="[]"
+  _PS[DETECTED_LANGUAGE]=""
+  enhance::run_correction _PS "haiku"
+  assert_equals "${_PS[WORKING_PROMPT]}" "${_PS[CORRECTED_PROMPT]}"
   _teardown_mock_env
 }
 
@@ -1555,10 +1561,11 @@ function test_run_correction_updates_working_prompt() {
 
 function test_run_translation_sets_working_prompt() {
   _setup_stage_mock_env
-  WORKING_PROMPT="bonjour le monde"
-  enhance::run_translation "bonjour le monde" "haiku"
-  assert_not_empty "$WORKING_PROMPT"
-  assert_not_equals "bonjour le monde" "$WORKING_PROMPT"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="bonjour le monde"
+  enhance::run_translation _PS "haiku"
+  assert_not_empty "${_PS[WORKING_PROMPT]}"
+  assert_not_equals "bonjour le monde" "${_PS[WORKING_PROMPT]}"
   _teardown_mock_env
 }
 
@@ -1574,9 +1581,10 @@ MOCK
   chmod +x "$mock_dir/claude"
   PATH="$mock_dir:$PATH"
   export PATH
-  WORKING_PROMPT="original prompt"
-  enhance::run_translation "original prompt" "haiku" 2>/dev/null || true
-  assert_equals "original prompt" "$WORKING_PROMPT"
+  declare -A _PS=()
+  _PS[WORKING_PROMPT]="original prompt"
+  enhance::run_translation _PS "haiku" 2>/dev/null || true
+  assert_equals "original prompt" "${_PS[WORKING_PROMPT]}"
   PATH="$orig_path"
   export PATH
   rm -rf "$mock_dir"
@@ -1641,7 +1649,7 @@ function test_write_audit_creates_file() {
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
   enhance::write_audit "$audit_log" "original prompt" "corrected prompt" "enhanced prompt" \
-    "[]" "[]" "true" "haiku" "false" "sonnet" "false" "haiku"
+    "[]" "[]" "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   assert_file_exists "$audit_log"
   local content
   content=$(cat "$audit_log")
@@ -1656,7 +1664,7 @@ function test_write_audit_includes_models() {
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" \
-    "[]" "[]" "true" "haiku" "false" "sonnet" "false" "haiku"
+    "[]" "[]" "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
   assert_contains "haiku" "$content"
@@ -1668,7 +1676,7 @@ function test_write_audit_null_models_when_disabled() {
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" \
-    "[]" "[]" "false" "haiku" "false" "sonnet" "false" "haiku"
+    "[]" "[]" "" "false" "haiku" "false" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
   assert_contains "null" "$content"
@@ -1680,9 +1688,9 @@ function test_write_audit_appends() {
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
   enhance::write_audit "$audit_log" "first" "corr" "enh" \
-    "[]" "[]" "false" "haiku" "false" "sonnet" "false" "haiku"
+    "[]" "[]" "" "false" "haiku" "false" "sonnet" "false" "haiku"
   enhance::write_audit "$audit_log" "second" "corr" "enh" \
-    "[]" "[]" "false" "haiku" "false" "sonnet" "false" "haiku"
+    "[]" "[]" "" "false" "haiku" "false" "sonnet" "false" "haiku"
   local line_count
   line_count=$(wc -l <"$audit_log" | tr -d '[:space:]')
   assert_equals "2" "$line_count"
@@ -1772,7 +1780,7 @@ function test_write_audit_with_correction_true() {
   local tmpdir
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
-  enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "true" "haiku" "false" "sonnet" "false" "haiku"
+  enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
   assert_contains "haiku" "$content"
@@ -1783,7 +1791,7 @@ function test_write_audit_with_enhancement_true() {
   local tmpdir
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
-  enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "false" "haiku" "true" "sonnet" "false" "haiku"
+  enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "en" "false" "haiku" "true" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
   assert_contains "sonnet" "$content"
@@ -1794,7 +1802,7 @@ function test_write_audit_with_translation_true() {
   local tmpdir
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
-  enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "false" "haiku" "false" "sonnet" "true" "haiku"
+  enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "en" "false" "haiku" "false" "sonnet" "true" "haiku"
   local content
   content=$(cat "$audit_log")
   assert_contains "haiku" "$content"
@@ -1805,7 +1813,7 @@ function test_write_audit_with_mistakes() {
   local tmpdir
   tmpdir=$(mktemp -d)
   local audit_log="$tmpdir/.claude/prompts.json"
-  enhance::write_audit "$audit_log" "prompt" "corr" "enh" '["grammar"]' '[{"type":"grammar","correction":"fix"}]' "true" "haiku" "false" "sonnet" "false" "haiku"
+  enhance::write_audit "$audit_log" "prompt" "corr" "enh" '["grammar"]' '[{"type":"grammar","correction":"fix"}]' "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
   assert_contains "grammar" "$content"
@@ -1969,58 +1977,6 @@ function test_json_escape_without_jq_direct() {
 ###
 ### enhance::resolve_session_id (directory lookup)
 ###
-
-function test_resolve_session_id_from_directory_macos() {
-  if [[ "$IS_MACOS" != true ]]; then
-    return 0
-  fi
-  local tmpdir session_dir
-  tmpdir=$(mktemp -d)
-  session_dir="$tmpdir/.claude/session-env"
-  mkdir -p "$session_dir/active-session-1"
-  local orig_home="$HOME"
-  HOME="$tmpdir"
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  local orig_sid="$CLAUDE_SESSION_ID"
-  CLAUDE_SESSION_ID=""
-  enhance::resolve_session_id "" >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_not_empty "$result"
-  HOME="$orig_home"
-  CLAUDE_SESSION_ID="$orig_sid"
-  rm -rf "$tmpdir"
-}
-
-function test_resolve_session_id_empty_directory() {
-  local tmpdir session_dir
-  tmpdir=$(mktemp -d)
-  session_dir="$tmpdir/.claude/session-env"
-  mkdir -p "$session_dir"
-  local orig_home="$HOME"
-  HOME="$tmpdir"
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  local orig_sid="$CLAUDE_SESSION_ID"
-  CLAUDE_SESSION_ID=""
-  enhance::resolve_session_id "" >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_empty "$result"
-  HOME="$orig_home"
-  CLAUDE_SESSION_ID="$orig_sid"
-  rm -rf "$tmpdir"
-}
-
-function test_resolve_session_id_with_alphanumeric() {
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  CLAUDE_SESSION_ID="" enhance::resolve_session_id '{"session_id":"abc123_def-456"}' >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_equals "abc123_def-456" "$result"
-}
 
 ###
 ### _read_stdin_payload (direct call)

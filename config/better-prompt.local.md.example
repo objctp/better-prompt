@@ -22,7 +22,7 @@ enhancement_model: sonnet
 audit: true
 
 # Show intermediate steps (for debugging)
-debug_mode: false
+verbose: false
 ---
 
 # Better Prompt Configuration
@@ -36,7 +36,7 @@ This file contains settings for the better-prompt plugin. Edit the YAML frontmat
 - `translation`: Translate non-English prompts into English before enhancement
 - `enhancement`: Improve clarity and specificity
 - `audit`: Log all pipeline stages with mistake analysis
-- `debug_mode`: Show intermediate steps
+- `verbose`: Show intermediate steps
 
 ## Pipeline Order
 

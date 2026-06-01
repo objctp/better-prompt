@@ -18,96 +18,93 @@ function tear_down() {
 }
 
 ###
-### _bootstrap_debug
+### _config_read_single
 ###
 
-function test_bootstrap_debug_returns_true() {
-  printf '%s\n' '---' 'debug_mode: true' >"$CONFIG"
+function test_config_read_single_returns_true() {
+  printf '%s\n' '---' 'verbose: true' >"$CONFIG"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "true" "$result"
 }
 
-function test_bootstrap_debug_returns_false() {
-  printf '%s\n' '---' 'debug_mode: false' >"$CONFIG"
+function test_config_read_single_returns_false() {
+  printf '%s\n' '---' 'verbose: false' >"$CONFIG"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "false" "$result"
 }
 
-function test_bootstrap_debug_returns_empty_for_missing_key() {
+function test_config_read_single_returns_default_for_missing_key() {
   printf '%s\n' '---' 'other_key: value' >"$CONFIG"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_empty "$result"
-}
-
-function test_bootstrap_debug_missing_file() {
-  local orig_config="$CONFIG"
-  CONFIG="/nonexistent/path/config.md"
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_equals "false" "$result"
-  CONFIG="$orig_config"
-}
-
-function test_bootstrap_debug_strips_comments() {
-  printf '%s\n' '---' 'debug_mode: true # enable debug' >"$CONFIG"
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_equals "true" "$result"
-}
-
-function test_bootstrap_debug_strips_whitespace() {
-  printf '%s\n' '---' 'debug_mode:   true  ' >"$CONFIG"
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
-  local result
-  result=$(cat "$_OUT")
-  assert_equals "true" "$result"
-}
-
-function test_bootstrap_debug_ignores_body() {
-  printf '%s\n' '---' 'debug_mode: false' '---' 'debug_mode: true' >"$CONFIG"
-  local _OUT
-  _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "false" "$result"
 }
 
-function test_bootstrap_debug_empty_file() {
+function test_config_read_single_missing_file() {
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _config_read_single "/nonexistent/path/config.md" "verbose" "false" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "false" "$result"
+}
+
+function test_config_read_single_strips_comments() {
+  printf '%s\n' '---' 'verbose: true # enable verbose' >"$CONFIG"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "true" "$result"
+}
+
+function test_config_read_single_strips_whitespace() {
+  printf '%s\n' '---' 'verbose:   true  ' >"$CONFIG"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "true" "$result"
+}
+
+function test_config_read_single_ignores_body() {
+  printf '%s\n' '---' 'verbose: false' '---' 'verbose: true' >"$CONFIG"
+  local _OUT
+  _OUT=$(bashunit::temp_file)
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
+  local result
+  result=$(cat "$_OUT")
+  assert_equals "false" "$result"
+}
+
+function test_config_read_single_empty_file() {
   : >"$CONFIG"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
-  assert_empty "$result"
+  assert_equals "false" "$result"
 }
 
-function test_bootstrap_debug_with_other_keys() {
-  printf '%s\n' '---' 'enabled: true' 'debug_mode: true' 'correction: false' >"$CONFIG"
+function test_config_read_single_with_other_keys() {
+  printf '%s\n' '---' 'enabled: true' 'verbose: true' 'correction: false' >"$CONFIG"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  _bootstrap_debug >"$_OUT"
+  _config_read_single "$CONFIG" "verbose" "false" >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_equals "true" "$result"
@@ -673,11 +670,11 @@ function test_main_sourced_empty_session_dir() {
   rm -rf "$tmpdir"
 }
 
-function test_main_sourced_debug_mode_outputs_debug_lines() {
+function test_main_sourced_verbose_outputs_debug_lines() {
   local tmpdir tmpcfg
   tmpdir=$(mktemp -d)
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
-  printf '%s\n' '---' 'debug_mode: true' >"$tmpcfg"
+  printf '%s\n' '---' 'verbose: true' >"$tmpcfg"
   local result
   result=$(CLAUDE_SESSION_ID="" BETTER_PROMPT_CONFIG="$tmpcfg" bash "$PROJECT_ROOT/hooks/scripts/stop-hook.sh" </dev/null 2>&1 || true)
   assert_contains "continue" "$result"
@@ -780,7 +777,7 @@ function test_check_prerequisites_process_alive() {
   stop::check_prerequisites "false" "abc-alive" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
-  assert_empty "$reason"
+  assert_equals "$$" "$reason"
   ACTIVE_SESSIONS_DIR="$orig_dir"
   rm -rf "$tmpdir"
 }
@@ -1399,7 +1396,7 @@ function test_check_prerequisites_full_path_alive_direct() {
   stop::check_prerequisites "false" "alive-full-sid" >"$_OUT"
   local reason
   reason=$(cat "$_OUT")
-  assert_empty "$reason"
+  assert_equals "$$" "$reason"
   ACTIVE_SESSIONS_DIR="$orig_dir"
   rm -rf "$tmpdir"
 }

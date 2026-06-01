@@ -10,6 +10,9 @@ CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
 ACTIVE_SESSIONS_DIR="${BETTER_PROMPT_SESSIONS_DIR:-$HOME/.claude/sessions}"
 readonly CONFIG ACTIVE_SESSIONS_DIR
 
+# shellcheck source=lib/config.sh
+source "${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}/hooks/scripts/lib/config.sh"
+
 if [[ -z "${IS_MACOS:-}" ]]; then
   if [[ "$(uname -s)" == "Darwin" ]]; then
     IS_MACOS=true
@@ -21,18 +24,6 @@ fi
 ###
 ### :::: Private Functions :::: ########
 ###
-
-_bootstrap_debug() {
-  if [[ ! -f "$CONFIG" ]]; then
-    printf 'false'
-    return 0
-  fi
-  awk '/^---$/{count++; next} count==1 && /^debug_mode:/{
-		sub(/^debug_mode:[[:space:]]*/,""); sub(/#.*$/,"")
-		gsub(/^[[:space:]]+|[[:space:]]+$/,""); print; exit
-	} count>=2{exit}' "$CONFIG"
-  return 0
-}
 
 _debug() {
   local dbg="$1"
@@ -144,6 +135,13 @@ stop::read_clipboard() {
 
 stop::send_rewind_sequence() {
   local debug="$1"
+  local session_pid="$2"
+
+  # Re-verify session is still alive before injecting keystrokes
+  if [[ -n "$session_pid" ]] && ! stop::is_process_running "$session_pid"; then
+    _debug "$debug" "Session $session_pid died before rewind — aborting keystroke injection"
+    return 1
+  fi
 
   sleep 1
 
@@ -187,11 +185,6 @@ APPLESCRIPT
   return 0
 }
 
-# Returns skip reason string (non-empty) if rewind should be aborted, empty otherwise.
-# Side effects: reads session files from ACTIVE_SESSIONS_DIR.
-# Arguments:
-#   $1 - debug: "true"/"false" for debug output
-#   $2 - session_id: Claude session identifier
 stop::check_prerequisites() {
   local debug="$1"
   local session_id="$2"
@@ -234,29 +227,35 @@ stop::check_prerequisites() {
     return 0
   fi
 
-  printf ''
+  # Print the session PID on success — caller uses it for liveness checks
+  printf '%s' "$session_pid"
 }
 
 # Side effects: sets REWIND_RESULT global — empty on success, "clipboard_empty" or
 # "rewind_failed" on failure. Reads system clipboard and sends keystrokes.
 # Arguments:
 #   $1 - debug: "true"/"false" for debug output
+#   $2 - session_pid: PID of the Claude session (for liveness check)
 stop::attempt_rewind() {
   local debug="$1"
+  local session_pid="$2"
 
   CLIPBOARD_CONTENT=$(stop::read_clipboard)
 
   if [[ -z "$CLIPBOARD_CONTENT" ]]; then
     _debug "$debug" "Clipboard empty — cannot inject enhanced prompt"
+    _debug "$debug" "The enhanced prompt was included in the block reason; check the Claude response above."
     REWIND_RESULT="clipboard_empty"
     return 0
   fi
 
-  if ! stop::send_rewind_sequence "$debug"; then
+  if ! stop::send_rewind_sequence "$debug" "$session_pid"; then
+    _debug "$debug" "Rewind keystroke injection failed — the enhanced prompt was included in the block reason"
     REWIND_RESULT="rewind_failed"
     return 0
   fi
 
+  _debug "$debug" "Rewind completed — enhanced prompt submitted via paste"
   REWIND_RESULT=""
 }
 
@@ -264,21 +263,30 @@ stop::attempt_rewind() {
 ### :::: Main :::: #####################
 ###
 
+_stop_cleanup() {
+  local pid_file="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-stop-pid"
+  rm -f "$pid_file" 2>/dev/null
+  return 0
+}
+
 main() {
-  local DEBUG
-  DEBUG=$(_bootstrap_debug)
+  trap _stop_cleanup EXIT
+
+  local VERBOSE
+  VERBOSE=$(_config_read_single "$CONFIG" "verbose" "false")
 
   local SESSION_ID
   SESSION_ID=$(stop::resolve_session_id)
 
-  local SKIP_REASON
-  SKIP_REASON=$(stop::check_prerequisites "$DEBUG" "$SESSION_ID")
-  if [[ -n "$SKIP_REASON" ]]; then
+  local CHECK_RESULT
+  CHECK_RESULT=$(stop::check_prerequisites "$VERBOSE" "$SESSION_ID")
+  if [[ "$CHECK_RESULT" == "no_session" ]] || [[ "$CHECK_RESULT" == "no_pid_file" ]] || [[ "$CHECK_RESULT" == "no_pid" ]] || [[ "$CHECK_RESULT" == "process_dead" ]]; then
     printf '{"continue": true}\n'
     exit 0
   fi
 
-  stop::attempt_rewind "$DEBUG"
+  local SESSION_PID="$CHECK_RESULT"
+  stop::attempt_rewind "$VERBOSE" "$SESSION_PID"
   if [[ -n "$REWIND_RESULT" ]]; then
     printf '{"continue": true}\n'
     exit 0

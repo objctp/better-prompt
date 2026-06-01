@@ -84,7 +84,7 @@ translation_model: haiku
 enhancement: false
 enhancement_model: sonnet
 audit: true
-debug_mode: false
+verbose: false
 ---
 ```
 
@@ -100,7 +100,7 @@ debug_mode: false
 | `enhancement`       | boolean | `false`  | Enable prompt enhancement                           |
 | `enhancement_model` | string  | `sonnet` | Model used for enhancement                          |
 | `audit`             | boolean | `true`   | Enable audit logging                                |
-| `debug_mode`        | boolean | `false`  | Show intermediate steps instead of replacing prompt |
+| `verbose`           | boolean | `false`  | Show intermediate steps (correction, translation, enhancement) |
 
 ## Usage
 
@@ -124,7 +124,7 @@ Once enabled, the plugin intercepts every prompt automatically:
 
 ### Debug mode
 
-When `debug_mode` is `true`, the plugin blocks the original prompt and surfaces all three pipeline stages via the block reason so you can inspect them:
+When `verbose` is `true`, the plugin blocks the original prompt and surfaces all three pipeline stages via the block reason so you can inspect them:
 
 ```
 [Better Prompt Debug]
@@ -163,6 +163,15 @@ The plugin registers a `UserPromptSubmit` hook (type: `command`) that runs `hook
 
 A content-hash sentinel prevents the pipeline from re-processing its own enhanced prompt when the rewind causes a second `UserPromptSubmit` event. The sentinel stores the md5 hash of the final prompt and expires after 60 seconds.
 
+### Rewind limitations
+
+The block-clipboard-paste mechanism is a workaround for the absence of a native prompt-replacement API. Be aware of the following constraints:
+
+- **Clipboard clobbering** — any process writing to the clipboard between block and paste causes the wrong content to be submitted. The block reason includes the enhanced prompt text as a fallback.
+- **Terminal compatibility** — keystroke injection via `osascript` or `ydotool` may not work inside `tmux`, `screen`, or embedded terminal emulators (VS Code, JetBrains).
+- **Permissions** — macOS requires accessibility permissions for `osascript`; Linux requires `uinput` access for `ydotool`.
+- **Timing** — the stop-hook waits 1 second before pasting. Very slow or very fast systems may need adjustment.
+
 ## Troubleshooting
 
 ### Clipboard Not Working
@@ -184,7 +193,7 @@ A content-hash sentinel prevents the pipeline from re-processing its own enhance
   ```
 - Ensure the process is still running: `ps -p <pid>`
 - Check `/tmp/better-prompt-stop.log` for stop-hook output
-- Enable `debug_mode` to see pipeline details
+- Enable `verbose` to see pipeline details
 
 ## Audit log format
 
