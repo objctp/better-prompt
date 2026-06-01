@@ -7,8 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'mkdir -p ~/.claude && [ ! -f ~/.claude/better-prompt.local.md ] && cp \"${CLAUDE_PLUGIN_ROOT}/config/better-prompt.local.md.example\" ~/.claude/better-prompt.local.md 2>/dev/null || true; pid_file=\"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-stop-pid\"; if [ -f \"$pid_file\" ]; then pid=$(cat \"$pid_file\" 2>/dev/null); if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then kill \"$pid\" 2>/dev/null; fi; rm -f \"$pid_file\"; fi'",
-            "statusMessage": "Placing config file and .prompts.json on project root",
+            "command": "bash -c 'mkdir -p ~/.claude \"$CLAUDE_PROJECT_DIR/.claude/better-prompt\" && [ ! -f ~/.claude/better-prompt.local.md ] && cp \"${CLAUDE_PLUGIN_ROOT}/config/better-prompt.local.md.example\" ~/.claude/better-prompt.local.md 2>/dev/null || true; pid_file=\"$CLAUDE_PROJECT_DIR/.claude/better-prompt/.stop-pid\"; if [ -f \"$pid_file\" ]; then pid=$(cat \"$pid_file\" 2>/dev/null); if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then kill \"$pid\" 2>/dev/null; fi; rm -f \"$pid_file\"; fi'",
+            "statusMessage": "Initialising better-prompt",
             "timeout": 5
           }
         ]
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'rm -f \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-sentinel\" \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-stop-pid\" \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-enhance-session\" \"$CLAUDE_PROJECT_DIR/.claude/.better-prompt-context\"'",
+            "command": "bash -c 'rm -f \"$CLAUDE_PROJECT_DIR/.claude/better-prompt/.sentinel\" \"$CLAUDE_PROJECT_DIR/.claude/better-prompt/.stop-pid\" \"$CLAUDE_PROJECT_DIR/.claude/better-prompt/.enhance-session\" \"$CLAUDE_PROJECT_DIR/.claude/better-prompt/.context\"'",
             "statusMessage": "Cleaning up...",
             "timeout": 30
           }

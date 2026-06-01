@@ -659,7 +659,7 @@ function test_check_sentinel_no_file() {
 function test_check_sentinel_matching_hash() {
   local tmpdir sentinel
   tmpdir=$(mktemp -d)
-  sentinel="$tmpdir/.better-prompt-sentinel"
+  sentinel="$tmpdir/.sentinel"
   local _H
   _H=$(bashunit::temp_file)
   _md5 "hello world" >"$_H"
@@ -674,7 +674,7 @@ function test_check_sentinel_matching_hash() {
 function test_check_sentinel_mismatched_hash() {
   local tmpdir sentinel
   tmpdir=$(mktemp -d)
-  sentinel="$tmpdir/.better-prompt-sentinel"
+  sentinel="$tmpdir/.sentinel"
   local _H
   _H=$(bashunit::temp_file)
   _md5 "old prompt" >"$_H"
@@ -689,7 +689,7 @@ function test_check_sentinel_mismatched_hash() {
 function test_check_sentinel_stale_hash_removed() {
   local tmpdir sentinel
   tmpdir=$(mktemp -d)
-  sentinel="$tmpdir/.better-prompt-sentinel"
+  sentinel="$tmpdir/.sentinel"
   _atomic_write "$sentinel" "stale"
   touch -t 202501010000 "$sentinel"
   enhance::check_sentinel "$sentinel" "some prompt"
@@ -1086,7 +1086,7 @@ function test_main_sourced_sentinel_prevents_loop() {
   mkdir -p "$tmpdir/.claude"
   tmpcfg=$(mktemp "$tmpdir/cfg.XXXXXX")
   printf '%s\n' '---' 'enabled: true' 'correction: false' 'enhancement: false' 'translation: false' 'audit: false' >"$tmpcfg"
-  local sentinel="$tmpdir/.claude/.better-prompt-sentinel"
+  local sentinel="$tmpdir/.claude/better-prompt/.sentinel"
   local _H
   _H=$(bashunit::temp_file)
   _md5 "hello world" >"$_H"
@@ -1110,9 +1110,9 @@ function test_main_sourced_audit_log_written() {
   local result
   result=$(printf '%s' '{"prompt":"hello world","session_id":"ses9"}' | BETTER_PROMPT_CONFIG="$tmpcfg" CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="ses9" bash "$PROJECT_ROOT/hooks/scripts/enhance.sh" 2>/dev/null || true)
   assert_contains "block" "$result"
-  assert_file_exists "$tmpdir/.claude/prompts.json"
+  assert_file_exists "$tmpdir/.claude/better-prompt/audit.json"
   local log_content
-  log_content=$(cat "$tmpdir/.claude/prompts.json")
+  log_content=$(cat "$tmpdir/.claude/better-prompt/audit.json")
   assert_contains "hello world" "$log_content"
   rm -rf "$tmpdir"
   _teardown_mock_env
@@ -1203,9 +1203,8 @@ function test_load_settings_uses_project_dir() {
   declare -gA _CFG=()
   _parse_config
   enhance::load_settings
-  assert_equals "$tmpdir/.claude/prompts.json" "$AUDIT_LOG"
-  assert_equals "$tmpdir/.claude/.better-prompt-sentinel" "$SENTINEL"
-  assert_equals "$tmpdir/.claude/.better-prompt-enhance-session" "$ENHANCE_SESSION_FILE"
+  assert_equals "$tmpdir/.claude/better-prompt/audit.json" "$AUDIT_LOG"
+  assert_equals "$tmpdir/.claude/better-prompt/.sentinel" "$SENTINEL"
   rm -rf "$tmpdir"
   CONFIG="$CONFIG_ORIG"
   CLAUDE_PROJECT_DIR="$PROJECT_DIR_ORIG"
@@ -1263,7 +1262,7 @@ function test_should_skip_directive_bang() {
 function test_should_skip_sentinel_match() {
   local tmpdir sentinel
   tmpdir=$(mktemp -d)
-  sentinel="$tmpdir/.better-prompt-sentinel"
+  sentinel="$tmpdir/.sentinel"
   local _H
   _H=$(bashunit::temp_file)
   _md5 "hello world" >"$_H"
@@ -1327,7 +1326,7 @@ function test_run_pipeline_all_disabled() {
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/.claude"
-  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+  local sess_file="$tmpdir/.claude/better-prompt/.enhance-session"
 
   declare -A _PS=()
   _PS[WORKING_PROMPT]="hello world"
@@ -1351,7 +1350,7 @@ function test_run_pipeline_correction_enabled() {
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/.claude"
-  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+  local sess_file="$tmpdir/.claude/better-prompt/.enhance-session"
 
   declare -A _PS=()
   _PS[WORKING_PROMPT]="hallo world"
@@ -1374,7 +1373,7 @@ function test_run_pipeline_translation_enabled() {
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/.claude"
-  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+  local sess_file="$tmpdir/.claude/better-prompt/.enhance-session"
 
   declare -A _PS=()
   _PS[WORKING_PROMPT]="bonjour le monde"
@@ -1396,7 +1395,7 @@ function test_run_pipeline_enhancement_enabled() {
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/.claude"
-  local sess_file="$tmpdir/.claude/.better-prompt-enhance-session"
+  local sess_file="$tmpdir/.claude/better-prompt/.enhance-session"
 
   declare -A _PS=()
   _PS[WORKING_PROMPT]="hello world"
@@ -1449,7 +1448,7 @@ function test_finalize_writes_sentinel_and_response() {
   TRANSLATION="false"
   TRANSLATION_MODEL="haiku"
 
-  local sentinel="$tmpdir/.claude/.better-prompt-sentinel"
+  local sentinel="$tmpdir/.claude/better-prompt/.sentinel"
   local _OUT
   _OUT=$(bashunit::temp_file)
   enhance::finalize _PS "hello world" "test-session-123" >"$_OUT" 2>/dev/null || true
@@ -1499,7 +1498,7 @@ function test_finalize_writes_audit_when_enabled() {
 
   enhance::finalize _PS "hello world" "test-session-456" 2>/dev/null || true
 
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   assert_file_exists "$audit_log"
   local log_content
   log_content=$(cat "$audit_log")
@@ -1612,7 +1611,7 @@ function test_run_enhancement_stage_with_session_file() {
   _setup_stage_mock_env
   local sess_dir
   sess_dir=$(mktemp -d)
-  local sess_file="$sess_dir/.better-prompt-enhance-session"
+  local sess_file="$sess_dir/.enhance-session"
   printf '%s' "existing-session-id" >"$sess_file"
   local _OUT
   _OUT=$(bashunit::temp_file)
@@ -1647,7 +1646,7 @@ function test_run_enhancement_stage_writes_session() {
 function test_write_audit_creates_file() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "original prompt" "corrected prompt" "enhanced prompt" \
     "[]" "[]" "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   assert_file_exists "$audit_log"
@@ -1662,7 +1661,7 @@ function test_write_audit_creates_file() {
 function test_write_audit_includes_models() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" \
     "[]" "[]" "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   local content
@@ -1674,7 +1673,7 @@ function test_write_audit_includes_models() {
 function test_write_audit_null_models_when_disabled() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" \
     "[]" "[]" "" "false" "haiku" "false" "sonnet" "false" "haiku"
   local content
@@ -1686,7 +1685,7 @@ function test_write_audit_null_models_when_disabled() {
 function test_write_audit_appends() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "first" "corr" "enh" \
     "[]" "[]" "" "false" "haiku" "false" "sonnet" "false" "haiku"
   enhance::write_audit "$audit_log" "second" "corr" "enh" \
@@ -1779,7 +1778,7 @@ function test_format_response_debug_shows_labels() {
 function test_write_audit_with_correction_true() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
@@ -1790,7 +1789,7 @@ function test_write_audit_with_correction_true() {
 function test_write_audit_with_enhancement_true() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "en" "false" "haiku" "true" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
@@ -1801,7 +1800,7 @@ function test_write_audit_with_enhancement_true() {
 function test_write_audit_with_translation_true() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" "[]" "[]" "en" "false" "haiku" "false" "sonnet" "true" "haiku"
   local content
   content=$(cat "$audit_log")
@@ -1812,7 +1811,7 @@ function test_write_audit_with_translation_true() {
 function test_write_audit_with_mistakes() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  local audit_log="$tmpdir/.claude/prompts.json"
+  local audit_log="$tmpdir/.claude/better-prompt/audit.json"
   enhance::write_audit "$audit_log" "prompt" "corr" "enh" '["grammar"]' '[{"type":"grammar","correction":"fix"}]' "en" "true" "haiku" "false" "sonnet" "false" "haiku"
   local content
   content=$(cat "$audit_log")
@@ -1939,7 +1938,7 @@ MOCK
 function test_write_sentinel_warns_on_empty_hash() {
   local tmpdir sentinel
   tmpdir=$(mktemp -d)
-  sentinel="$tmpdir/.better-prompt-sentinel"
+  sentinel="$tmpdir/.sentinel"
   local _ERR
   _ERR=$(bashunit::temp_file)
   _md5() {

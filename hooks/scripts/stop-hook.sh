@@ -264,7 +264,7 @@ stop::attempt_rewind() {
 ###
 
 _stop_cleanup() {
-  local pid_file="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-stop-pid"
+  local pid_file="${CLAUDE_PROJECT_DIR:-.}/.claude/better-prompt/.stop-pid"
   rm -f "$pid_file" 2>/dev/null
   return 0
 }

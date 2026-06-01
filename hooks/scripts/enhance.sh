@@ -438,7 +438,7 @@ enhance::format_response() {
 enhance::spawn_stop_hook() {
   local session_id="$1"
   local stop_log="${TMPDIR:-/tmp}/better-prompt-stop.log"
-  local stop_pid_file="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-stop-pid"
+  local stop_pid_file="${RUNTIME_DIR}/.stop-pid"
   CLAUDE_SESSION_ID="$session_id" \
     CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
     nohup bash "${PLUGIN_ROOT}/hooks/scripts/stop-hook.sh" \
@@ -460,9 +460,11 @@ enhance::load_settings() {
   TRANSLATION=$(_get_setting "translation" "false")
   TRANSLATION_MODEL=$(_get_setting "translation_model" "haiku")
   AUDIT=$(_get_setting "audit" "true")
-  AUDIT_LOG="${CLAUDE_PROJECT_DIR:-.}/.claude/prompts.json"
-  SENTINEL="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-sentinel"
-  CONTEXT_FILE="${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-context"
+  RUNTIME_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/better-prompt"
+  AUDIT_LOG="${RUNTIME_DIR}/audit.json"
+  SENTINEL="${RUNTIME_DIR}/.sentinel"
+  CONTEXT_FILE="${RUNTIME_DIR}/.context"
+  mkdir -p "$RUNTIME_DIR"
 
   # Validate model names look reasonable (non-empty, valid characters only).
   # We do not restrict to a hardcoded set — any valid model identifier is accepted.
@@ -527,6 +529,14 @@ enhance::run_pipeline() {
   _pl_st[CORRECTIONS_JSON]="[]"
   _pl_st[MISTAKE_NATURE_JSON]="[]"
 
+  # When enhancement is enabled without translation, correction is redundant —
+  # enhancement subsumes grammar/spelling fixes and no language detection is needed.
+  local _skip_correction="false"
+  if [[ "$enhancement" == "true" ]] && [[ "$translation" != "true" ]] && [[ "$correction" == "true" ]]; then
+    _skip_correction="true"
+    _debug "Enhancement enabled without translation — skipping correction (enhancement subsumes it)"
+  fi
+
   # When translation is enabled without correction, still run the correction
   # agent to detect language — then discard corrections so the user's original
   # wording is preserved.  This avoids an extra claude -p invocation.
@@ -536,7 +546,7 @@ enhance::run_pipeline() {
     _debug "Translation enabled without correction — running correction agent for language detection only"
   fi
 
-  if [[ "$correction" == "true" ]] || [[ "$_correction_only_for_language" == "true" ]]; then
+  if [[ "$_skip_correction" != "true" ]] && { [[ "$correction" == "true" ]] || [[ "$_correction_only_for_language" == "true" ]]; }; then
     local _pre_prompt="${_pl_st[WORKING_PROMPT]}"
     enhance::run_correction "$1" "$correction_model"
 
@@ -608,7 +618,7 @@ main() {
   enhance::load_settings
 
   # Clean up orphaned session file from previous --resume mechanism
-  rm -f "${CLAUDE_PROJECT_DIR:-.}/.claude/.better-prompt-enhance-session"
+  rm -f "${RUNTIME_DIR}/.enhance-session"
 
   local SESSION_ID
   SESSION_ID=$(enhance::resolve_session_id "$STDIN_PAYLOAD")
