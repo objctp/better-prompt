@@ -104,6 +104,30 @@ _md5() {
   return 0
 }
 
+# Accumulate cost and usage from a --output-format json response into the
+# pipeline state nameref.  Arguments:
+#   $1 - nameref (associative array with COST_USD, INPUT_TOKENS, OUTPUT_TOKENS)
+#   $2 - raw JSON output from claude -p --output-format json
+_accumulate_cost() {
+  local -n _ac_st="$1"
+  local raw_json="$2"
+
+  if [[ -z "$raw_json" ]] || ! command -v jq &>/dev/null; then
+    return 0
+  fi
+
+  local stage_cost stage_input stage_output
+  stage_cost=$(printf '%s' "$raw_json" | jq -r '.total_cost_usd // 0' 2>/dev/null) || stage_cost="0"
+  stage_input=$(printf '%s' "$raw_json" | jq -r '.usage.input_tokens // 0' 2>/dev/null) || stage_input="0"
+  stage_output=$(printf '%s' "$raw_json" | jq -r '.usage.output_tokens // 0' 2>/dev/null) || stage_output="0"
+
+  # Use awk for float addition (avoids bc dependency)
+  _ac_st[COST_USD]=$(awk "BEGIN {printf \"%.6f\", (${_ac_st[COST_USD]:-0}) + $stage_cost}")
+  _ac_st[INPUT_TOKENS]="$((${_ac_st[INPUT_TOKENS]:-0} + stage_input))"
+  _ac_st[OUTPUT_TOKENS]="$((${_ac_st[OUTPUT_TOKENS]:-0} + stage_output))"
+  return 0
+}
+
 _read_stdin_payload() {
   # Must run before any subshell consumes stdin
   # Payload format: { "prompt": "...", "session_id": "...", ... }
@@ -212,22 +236,28 @@ enhance::run_correction() {
 Prompt: $working_prompt"
 
   local correction_result=""
-  correction_result=$(printf '%s' "$correction_prompt" | BETTER_PROMPT_CHILD=1 claude -p --agent better-prompt:prompt-correction --model "$correction_model" 2>&1) || {
+  correction_result=$(printf '%s' "$correction_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-correction --model "$correction_model" 2>&1) || {
     _warn "Correction stage failed: $correction_result"
     correction_result=""
   }
+
+  _accumulate_cost _cr_st "$correction_result"
 
   local corrected=""
   _cr_st[CORRECTIONS_JSON]="[]"
   _cr_st[MISTAKE_NATURE_JSON]="[]"
 
   if [[ -n "$correction_result" ]] && command -v jq &>/dev/null; then
-    correction_result=$(printf '%s' "$correction_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
+    # Extract inner result from --output-format json wrapper
+    local inner_result
+    inner_result=$(printf '%s' "$correction_result" | jq -r '.result // empty' 2>/dev/null) || inner_result=""
+    # Fallback: if .result is empty, treat the raw output as the correction JSON
+    [[ -z "$inner_result" ]] && inner_result=$(printf '%s' "$correction_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
 
-    corrected=$(printf '%s' "$correction_result" | jq -r '.corrected // empty' 2>/dev/null) || corrected=""
-    _cr_st[CORRECTIONS_JSON]=$(printf '%s' "$correction_result" | jq '.mistakes // []' 2>/dev/null) || _cr_st[CORRECTIONS_JSON]="[]"
-    _cr_st[MISTAKE_NATURE_JSON]=$(printf '%s' "$correction_result" | jq '[.mistakes[]?.type] | unique' 2>/dev/null) || _cr_st[MISTAKE_NATURE_JSON]="[]"
-    _cr_st[DETECTED_LANGUAGE]=$(printf '%s' "$correction_result" | jq -r '.language // "en"' 2>/dev/null) || _cr_st[DETECTED_LANGUAGE]="en"
+    corrected=$(printf '%s' "$inner_result" | jq -r '.corrected // empty' 2>/dev/null) || corrected=""
+    _cr_st[CORRECTIONS_JSON]=$(printf '%s' "$inner_result" | jq '.mistakes // []' 2>/dev/null) || _cr_st[CORRECTIONS_JSON]="[]"
+    _cr_st[MISTAKE_NATURE_JSON]=$(printf '%s' "$inner_result" | jq '[.mistakes[]?.type] | unique' 2>/dev/null) || _cr_st[MISTAKE_NATURE_JSON]="[]"
+    _cr_st[DETECTED_LANGUAGE]=$(printf '%s' "$inner_result" | jq -r '.language // "en"' 2>/dev/null) || _cr_st[DETECTED_LANGUAGE]="en"
   fi
 
   [[ -n "$corrected" ]] && _cr_st[WORKING_PROMPT]="$corrected"
@@ -247,20 +277,33 @@ enhance::run_translation() {
 Text: $working_prompt"
 
   local translation_result=""
-  translation_result=$(printf '%s' "$translation_prompt" | BETTER_PROMPT_CHILD=1 claude -p --agent better-prompt:prompt-translation --model "$translation_model" 2>&1) || {
+  translation_result=$(printf '%s' "$translation_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-translation --model "$translation_model" 2>&1) || {
     _warn "Translation stage failed: $translation_result"
     translation_result=""
   }
 
-  [[ -n "$translation_result" ]] && _tr_st[WORKING_PROMPT]="$translation_result"
+  _accumulate_cost _tr_st "$translation_result"
+
+  if [[ -n "$translation_result" ]] && command -v jq &>/dev/null; then
+    local translated_text
+    translated_text=$(printf '%s' "$translation_result" | jq -r '.result // empty' 2>/dev/null) || translated_text=""
+    # Fallback: if .result is empty, use raw output
+    if [[ -z "$translated_text" ]]; then
+      translated_text="$translation_result"
+    fi
+    [[ -n "$translated_text" ]] && _tr_st[WORKING_PROMPT]="$translated_text"
+  else
+    [[ -n "$translation_result" ]] && _tr_st[WORKING_PROMPT]="$translation_result"
+  fi
   return 0
 }
 
 enhance::run_enhancement_stage() {
-  local working_prompt="$1"
-  local enhancement_model="$2"
-  local context_file="$3"
-  local context_count="$4"
+  local -n _en_st="$1"
+  local working_prompt="$2"
+  local enhancement_model="$3"
+  local context_file="$4"
+  local context_count="$5"
 
   _debug "Running enhancement with model: $enhancement_model"
 
@@ -286,6 +329,8 @@ $working_prompt"
     _warn "Enhancement stage failed: $enhance_json"
     enhance_json=""
   }
+
+  _accumulate_cost _en_st "$enhance_json"
 
   local enhanced_result=""
   if [[ -n "$enhance_json" ]] && command -v jq &>/dev/null; then
@@ -399,6 +444,9 @@ enhance::copy_to_clipboard() {
 #   $6 - correction: "true"/"false"
 #   $7 - translation: "true"/"false"
 #   $8 - enhancement: "true"/"false"
+#   $9 - cost_usd: accumulated cost string (e.g. "0.003210")
+#   $10 - input_tokens: accumulated input tokens
+#   $11 - output_tokens: accumulated output tokens
 enhance::format_response() {
   local verbose="$1"
   local original_prompt="$2"
@@ -408,6 +456,9 @@ enhance::format_response() {
   local correction="$6"
   local translation="$7"
   local enhancement="$8"
+  local cost_usd="${9:-0}"
+  local input_tokens="${10:-0}"
+  local output_tokens="${11:-0}"
 
   # Always include the final prompt so the user can verify what was sent,
   # even when rewind fails (clipboard clobbered, permission denied, etc.).
@@ -422,6 +473,10 @@ enhance::format_response() {
       [[ "${DETECTED_LANGUAGE:-en}" != "en" ]] && debug_msg+="\nTranslated: $working_prompt"
     fi
     [[ "$enhancement" == "true" ]] && debug_msg+="\nEnhanced:   $enhanced_prompt"
+    if [[ -n "$cost_usd" ]] && [[ "$cost_usd" != "0" ]] && [[ "$cost_usd" != "0.000000" ]]; then
+      debug_msg+="\nCost:       \$$(printf '%.6f' "$cost_usd")"
+      debug_msg+="\nTokens:     ${input_tokens} in / ${output_tokens} out"
+    fi
     debug_msg=$(printf '%b' "$debug_msg")
     local escaped_debug
     escaped_debug=$(_json_escape "$debug_msg")
@@ -528,6 +583,9 @@ enhance::run_pipeline() {
 
   _pl_st[CORRECTIONS_JSON]="[]"
   _pl_st[MISTAKE_NATURE_JSON]="[]"
+  _pl_st[COST_USD]="0"
+  _pl_st[INPUT_TOKENS]="0"
+  _pl_st[OUTPUT_TOKENS]="0"
 
   # When enhancement is enabled without translation, correction is redundant —
   # enhancement subsumes grammar/spelling fixes and no language detection is needed.
@@ -570,7 +628,7 @@ enhance::run_pipeline() {
 
   _pl_st[ENHANCED_PROMPT]="${_pl_st[WORKING_PROMPT]}"
   if [[ "$enhancement" == "true" ]]; then
-    _pl_st[ENHANCED_PROMPT]=$(enhance::run_enhancement_stage "${_pl_st[WORKING_PROMPT]}" "$enhancement_model" "$CONTEXT_FILE" 5)
+    _pl_st[ENHANCED_PROMPT]=$(enhance::run_enhancement_stage "$1" "${_pl_st[WORKING_PROMPT]}" "$enhancement_model" "$CONTEXT_FILE" 5)
   fi
   return 0
 }
@@ -592,7 +650,8 @@ enhance::finalize() {
 
   enhance::write_sentinel "$SENTINEL" "$final_prompt"
   enhance::format_response "$VERBOSE" "$original_prompt" "${_fn_st[CORRECTED_PROMPT]}" "${_fn_st[WORKING_PROMPT]}" "$final_prompt" \
-    "$CORRECTION" "$TRANSLATION" "$ENHANCEMENT"
+    "$CORRECTION" "$TRANSLATION" "$ENHANCEMENT" \
+    "${_fn_st[COST_USD]:-0}" "${_fn_st[INPUT_TOKENS]:-0}" "${_fn_st[OUTPUT_TOKENS]:-0}"
   enhance::copy_to_clipboard "$final_prompt"
   _debug "Original prompt blocked; final prompt copied to clipboard for rewind"
   enhance::spawn_stop_hook "$session_id"

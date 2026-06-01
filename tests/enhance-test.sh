@@ -866,7 +866,7 @@ function _setup_mock_env() {
 
   cat >"$_MOCK_DIR/claude" <<'MOCK'
 #!/usr/bin/env bash
-echo '{"result":"mocked enhanced prompt","session_id":"mock-session-123"}'
+echo '{"result":"mocked enhanced prompt","session_id":"mock-session-123","total_cost_usd":0.001,"usage":{"input_tokens":500,"output_tokens":50}}'
 MOCK
   chmod +x "$_MOCK_DIR/claude"
 
@@ -894,13 +894,13 @@ function _setup_stage_mock_env() {
   cat >"$_MOCK_DIR/claude" <<'MOCK'
 #!/usr/bin/env bash
 if echo "$*" | grep -q "prompt-correction"; then
-  echo '{"corrected":"corrected prompt text","mistakes":[{"type":"grammar"}]}'
+  echo '{"result":"{\"corrected\":\"corrected prompt text\",\"mistakes\":[{\"type\":\"grammar\"}],\"language\":\"en\"}","session_id":"mock-session-456","total_cost_usd":0.002,"usage":{"input_tokens":300,"output_tokens":30}}'
 elif echo "$*" | grep -q "prompt-translation"; then
-  echo 'translated prompt text'
+  echo '{"result":"translated prompt text","session_id":"mock-session-456","total_cost_usd":0.001,"usage":{"input_tokens":200,"output_tokens":20}}'
 elif echo "$*" | grep -q "prompt-enhancement"; then
-  echo '{"result":"enhanced prompt text","session_id":"mock-session-456"}'
+  echo '{"result":"enhanced prompt text","session_id":"mock-session-456","total_cost_usd":0.003,"usage":{"input_tokens":400,"output_tokens":40}}'
 else
-  echo '{"result":"mocked enhanced prompt","session_id":"mock-session-123"}'
+  echo '{"result":"mocked enhanced prompt","session_id":"mock-session-123","total_cost_usd":0.001,"usage":{"input_tokens":500,"output_tokens":50}}'
 fi
 MOCK
   chmod +x "$_MOCK_DIR/claude"
@@ -1598,9 +1598,13 @@ function test_run_enhancement_stage_basic() {
   local sess_file
   sess_file=$(bashunit::temp_file)
   rm -f "$sess_file"
+  declare -A _test_st=()
+  _test_st[COST_USD]="0"
+  _test_st[INPUT_TOKENS]="0"
+  _test_st[OUTPUT_TOKENS]="0"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::run_enhancement_stage "hello world" "sonnet" "$sess_file" >"$_OUT"
+  enhance::run_enhancement_stage _test_st "hello world" "sonnet" "$sess_file" 5 >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_contains "enhanced" "$result"
@@ -1613,9 +1617,13 @@ function test_run_enhancement_stage_with_session_file() {
   sess_dir=$(mktemp -d)
   local sess_file="$sess_dir/.enhance-session"
   printf '%s' "existing-session-id" >"$sess_file"
+  declare -A _test_st=()
+  _test_st[COST_USD]="0"
+  _test_st[INPUT_TOKENS]="0"
+  _test_st[OUTPUT_TOKENS]="0"
   local _OUT
   _OUT=$(bashunit::temp_file)
-  enhance::run_enhancement_stage "hello world" "sonnet" "$sess_file" >"$_OUT"
+  enhance::run_enhancement_stage _test_st "hello world" "sonnet" "$sess_file" 5 >"$_OUT"
   local result
   result=$(cat "$_OUT")
   assert_not_empty "$result"
@@ -1629,7 +1637,11 @@ function test_run_enhancement_stage_writes_session() {
   sess_dir=$(mktemp -d)
   local sess_file="$sess_dir/session"
   rm -f "$sess_file"
-  enhance::run_enhancement_stage "hello world" "sonnet" "$sess_file" >/dev/null
+  declare -A _test_st=()
+  _test_st[COST_USD]="0"
+  _test_st[INPUT_TOKENS]="0"
+  _test_st[OUTPUT_TOKENS]="0"
+  enhance::run_enhancement_stage _test_st "hello world" "sonnet" "$sess_file" 5 >/dev/null
   if [[ -f "$sess_file" ]]; then
     local sid
     sid=$(cat "$sess_file")
