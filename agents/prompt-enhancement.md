@@ -75,13 +75,6 @@ Note: No fabricated details — the enhancement restructures the same informatio
 
 Note: The original is genuinely vague and there's no context to draw from. The enhancement can't add specifics that don't exist — instead it clarifies the expected output (describe root cause and fix).
 
-### Removing Ambiguity
-
-**Original:** "make it work with the new version"
-**Enhanced:** "Update the existing code to be compatible with the new version. List each breaking change addressed."
-
-Note: "it" is resolved to "the existing code", and the output expectation is clarified — but no assumptions are made about what "the new version" refers to.
-
 ### Preserving Technical Specificity
 
 **Original:** "add error handling to the API calls"

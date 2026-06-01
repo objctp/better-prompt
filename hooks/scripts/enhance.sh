@@ -193,8 +193,8 @@ Prompt: $working_prompt"
     correction_result=$(printf '%s' "$correction_result" | sed -e 's/^```[a-zA-Z]*$//' -e 's/^```$//' -e '/^[[:space:]]*$/d' | tr -d '\r')
 
     corrected=$(printf '%s' "$correction_result" | jq -r '.corrected // empty' 2>/dev/null) || corrected=""
-    _cr_st[CORRECTIONS_JSON]=$(printf '%s' "$correction_result" | jq '.mistakes // [] | @json' 2>/dev/null) || _cr_st[CORRECTIONS_JSON]="[]"
-    _cr_st[MISTAKE_NATURE_JSON]=$(printf '%s' "$correction_result" | jq '[.mistakes[]?.type] | unique | @json' 2>/dev/null) || _cr_st[MISTAKE_NATURE_JSON]="[]"
+    _cr_st[CORRECTIONS_JSON]=$(printf '%s' "$correction_result" | jq '.mistakes // []' 2>/dev/null) || _cr_st[CORRECTIONS_JSON]="[]"
+    _cr_st[MISTAKE_NATURE_JSON]=$(printf '%s' "$correction_result" | jq '[.mistakes[]?.type] | unique' 2>/dev/null) || _cr_st[MISTAKE_NATURE_JSON]="[]"
     _cr_st[DETECTED_LANGUAGE]=$(printf '%s' "$correction_result" | jq -r '.language // "en"' 2>/dev/null) || _cr_st[DETECTED_LANGUAGE]="en"
   fi
 

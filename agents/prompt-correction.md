@@ -37,27 +37,20 @@ Return ONLY a raw JSON object — no markdown, no code blocks, no explanation:
 
 ```json
 {
-  "corrected": "<corrected prompt text>",
-  "language": "<2-letter ISO 639-1 code of the detected language, e.g. en, fr, de, es, ja, zh>",
+  "corrected": "<corrected text, or original if no mistakes>",
+  "language": "<2-letter ISO 639-1 code>",
   "mistakes": [
-    {
-      "type": "<nature of the mistake, e.g. grammar, spelling, punctuation, word-choice, capitalisation>",
-      "original": "<incorrect text>",
-      "correction": "<corrected text>"
-    }
+    { "type": "<nature>", "original": "<text>", "correction": "<text>" }
   ]
 }
 ```
 
-If no mistakes are found, return:
+## Language Identification
 
-```json
-{
-  "corrected": "<original prompt>",
-  "language": "<2-letter ISO 639-1 code>",
-  "mistakes": []
-}
-```
+Identify the input language before correcting. The `language` field must reflect the actual language — never default to `"en"` without justification.
+
+- Users often type non-English words in ASCII without diacritics (e.g. "Tesekkurler" is Turkish "Teşekkürler"). Consider non-English origins before assuming English — especially for short or single-word inputs.
+- If the input is recognisably non-English, set `language` to the correct ISO 639-1 code and correct diacritics/transliteration. Do not translate — correction stays in the original language.
 
 ## Correction Guidelines
 
@@ -89,30 +82,6 @@ If no mistakes are found, return:
 }
 ```
 
-### Spelling Correction
-
-**Input:** "I need to recieve the data before procesing it."
-**Output:**
-
-```json
-{
-  "corrected": "I need to receive the data before processing it.",
-  "language": "en",
-  "mistakes": [
-    {
-      "type": "spelling",
-      "original": "recieve",
-      "correction": "receive"
-    },
-    {
-      "type": "spelling",
-      "original": "procesing",
-      "correction": "processing"
-    }
-  ]
-}
-```
-
 ### No Correction Needed
 
 **Input:** "Create a React component for the user profile page."
@@ -126,108 +95,44 @@ If no mistakes are found, return:
 }
 ```
 
-### Preserving Punctuation Style
+### Non-English Input (ASCII Without Diacritics)
 
-**Input:** "fix the bug—its really annoying"
+**Input:** "Tesekkurler"
 **Output:**
 
 ```json
 {
-  "corrected": "Fix the bug—it's really annoying",
-  "language": "en",
-  "mistakes": [
-    {
-      "type": "grammar",
-      "original": "its",
-      "correction": "it's"
-    }
-  ]
-}
-```
-
-Note: The em-dash and lowercase style are preserved; only the clear error (its/it's) is fixed.
-
-### Prompt Containing @mentions
-
-**Input:** "can you refactor @src/auth.ts so it dont throw on null inputs"
-**Output:**
-
-```json
-{
-  "corrected": "Can you refactor @src/auth.ts so it doesn't throw on null inputs?",
-  "language": "en",
-  "mistakes": [
-    {
-      "type": "grammar",
-      "original": "dont",
-      "correction": "doesn't"
-    }
-  ]
-}
-```
-
-Note: `@src/auth.ts` is untouched; only the grammar error is corrected.
-
-### Multiple Discrete Errors
-
-**Input:** "tell me a prminent scholar that is well known"
-**Output:**
-
-```json
-{
-  "corrected": "Tell me a prominent scholar who is well known.",
-  "language": "en",
+  "corrected": "Teşekkürler",
+  "language": "tr",
   "mistakes": [
     {
       "type": "spelling",
-      "original": "prminent",
-      "correction": "prominent"
-    },
-    {
-      "type": "grammar",
-      "original": "that",
-      "correction": "who"
+      "original": "Tesekkurler",
+      "correction": "Teşekkürler"
     }
   ]
 }
 ```
 
-Note: Each mistake entry targets the specific erroneous word only, not the surrounding sentence.
+Note: Turkish word typed without diacritics. Language correctly identified as `"tr"`; correction restores proper spelling without translating.
 
-### Word Choice Error
+### Non-English Input (Single Word)
 
-**Input:** "The affect of the change on performance was minimal."
+**Input:** "merci"
 **Output:**
 
 ```json
 {
-  "corrected": "The effect of the change on performance was minimal.",
-  "language": "en",
+  "corrected": "Merci",
+  "language": "fr",
   "mistakes": [
     {
-      "type": "word-choice",
-      "original": "affect",
-      "correction": "effect"
+      "type": "capitalisation",
+      "original": "merci",
+      "correction": "Merci"
     }
   ]
 }
 ```
 
-### Punctuation Error
-
-**Input:** "whats the status of the deploy"
-**Output:**
-
-```json
-{
-  "corrected": "What's the status of the deploy?",
-  "language": "en",
-  "mistakes": [
-    {
-      "type": "punctuation",
-      "original": "deploy",
-      "correction": "deploy?"
-    }
-  ]
-}
-```
+Note: "merci" is French, not English. Language field reflects this despite the word being short and ASCII-only.
