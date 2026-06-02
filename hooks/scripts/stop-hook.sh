@@ -10,29 +10,11 @@ CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
 ACTIVE_SESSIONS_DIR="${BETTER_PROMPT_SESSIONS_DIR:-$HOME/.claude/sessions}"
 readonly CONFIG ACTIVE_SESSIONS_DIR
 
-# shellcheck source=lib/config.sh
-source "${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}/hooks/scripts/lib/config.sh"
+_DEBUG_PREFIX="[better-prompt-stop]"
+# shellcheck source=lib/common.sh
+source "${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}/hooks/scripts/lib/common.sh"
 
-if [[ -z "${IS_MACOS:-}" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    IS_MACOS=true
-  else
-    IS_MACOS=false
-  fi
-fi
-
-###
-### :::: Private Functions :::: ########
-###
-
-_debug() {
-  local dbg="$1"
-  shift
-  if [[ "$dbg" == "true" ]]; then
-    printf '[better-prompt-stop] DEBUG: %s\n' "$*" >&2
-  fi
-  return 0
-}
+_detect_os
 
 ###
 ### :::: Public Functions :::: #########
@@ -134,12 +116,11 @@ stop::read_clipboard() {
 }
 
 stop::send_rewind_sequence() {
-  local debug="$1"
-  local session_pid="$2"
+  local session_pid="$1"
 
   # Re-verify session is still alive before injecting keystrokes
   if [[ -n "$session_pid" ]] && ! stop::is_process_running "$session_pid"; then
-    _debug "$debug" "Session $session_pid died before rewind — aborting keystroke injection"
+    _debug "Session $session_pid died before rewind — aborting keystroke injection"
     return 1
   fi
 
@@ -147,10 +128,10 @@ stop::send_rewind_sequence() {
 
   if [[ "$IS_MACOS" == true ]]; then
     if ! command -v osascript &>/dev/null; then
-      _debug "$debug" "osascript not found — cannot send keystrokes on macOS"
+      _debug "osascript not found — cannot send keystrokes on macOS"
       return 1
     fi
-    _debug "$debug" "Sending rewind sequence via osascript"
+    _debug "Sending rewind sequence via osascript"
     osascript <<'APPLESCRIPT'
 tell application "System Events"
     keystroke "v" using command down
@@ -160,51 +141,50 @@ end tell
 APPLESCRIPT
     local rc=$?
     if [[ $rc -ne 0 ]]; then
-      _debug "$debug" "osascript failed with exit code $rc"
+      _debug "osascript failed with exit code $rc"
       return 1
     fi
   else
     if command -v ydotool &>/dev/null; then
-      _debug "$debug" "Sending rewind sequence via ydotool"
+      _debug "Sending rewind sequence via ydotool"
       if ! ydotool key 29:1 47:1 47:0 29:0 2>/dev/null; then
-        _debug "$debug" "ydotool Ctrl+V failed"
+        _debug "ydotool Ctrl+V failed"
         return 1
       fi
       sleep 0.2
       if ! ydotool key 28:1 28:0 2>/dev/null; then
-        _debug "$debug" "ydotool Enter failed"
+        _debug "ydotool Enter failed"
         return 1
       fi
     else
-      _debug "$debug" "ydotool not found — cannot inject enhanced prompt on Linux"
+      _debug "ydotool not found — cannot inject enhanced prompt on Linux"
       return 1
     fi
   fi
 
-  _debug "$debug" "Rewind sequence sent"
+  _debug "Rewind sequence sent"
   return 0
 }
 
 stop::check_prerequisites() {
-  local debug="$1"
-  local session_id="$2"
+  local session_id="$1"
 
   if [[ -z "$session_id" ]]; then
-    _debug "$debug" "No session ID found, skipping rewind"
+    _debug "No session ID found, skipping rewind"
     printf 'no_session'
     return 0
   fi
 
-  _debug "$debug" "Stop hook fired for session: $session_id"
+  _debug "Stop hook fired for session: $session_id"
 
   local session_pid_file
   session_pid_file=$(stop::find_session_pid_file "$session_id")
 
   if [[ -z "$session_pid_file" ]] || [[ ! -f "$session_pid_file" ]]; then
-    _debug "$debug" "Session PID file not found for session: $session_id, trying active CLI session fallback"
+    _debug "Session PID file not found for session: $session_id, trying active CLI session fallback"
     session_pid_file=$(stop::find_active_cli_session)
     if [[ -z "$session_pid_file" ]] || [[ ! -f "$session_pid_file" ]]; then
-      _debug "$debug" "No active CLI session found either"
+      _debug "No active CLI session found either"
       printf 'no_pid_file'
       return 0
     fi
@@ -214,15 +194,15 @@ stop::check_prerequisites() {
   session_pid=$(stop::extract_pid "$session_pid_file")
 
   if [[ -z "$session_pid" ]]; then
-    _debug "$debug" "Failed to extract PID from session file: $session_pid_file"
+    _debug "Failed to extract PID from session file: $session_pid_file"
     printf 'no_pid'
     return 0
   fi
 
-  _debug "$debug" "Found session PID: $session_pid"
+  _debug "Found session PID: $session_pid"
 
   if ! stop::is_process_running "$session_pid"; then
-    _debug "$debug" "Process $session_pid not running"
+    _debug "Process $session_pid not running"
     printf 'process_dead'
     return 0
   fi
@@ -237,25 +217,24 @@ stop::check_prerequisites() {
 #   $1 - debug: "true"/"false" for debug output
 #   $2 - session_pid: PID of the Claude session (for liveness check)
 stop::attempt_rewind() {
-  local debug="$1"
-  local session_pid="$2"
+  local session_pid="$1"
 
   CLIPBOARD_CONTENT=$(stop::read_clipboard)
 
   if [[ -z "$CLIPBOARD_CONTENT" ]]; then
-    _debug "$debug" "Clipboard empty — cannot inject enhanced prompt"
-    _debug "$debug" "The enhanced prompt was included in the block reason; check the Claude response above."
+    _debug "Clipboard empty — cannot inject enhanced prompt"
+    _debug "The enhanced prompt was included in the block reason; check the Claude response above."
     REWIND_RESULT="clipboard_empty"
     return 0
   fi
 
-  if ! stop::send_rewind_sequence "$debug" "$session_pid"; then
-    _debug "$debug" "Rewind keystroke injection failed — the enhanced prompt was included in the block reason"
+  if ! stop::send_rewind_sequence "$session_pid"; then
+    _debug "Rewind keystroke injection failed — the enhanced prompt was included in the block reason"
     REWIND_RESULT="rewind_failed"
     return 0
   fi
 
-  _debug "$debug" "Rewind completed — enhanced prompt submitted via paste"
+  _debug "Rewind completed — enhanced prompt submitted via paste"
   REWIND_RESULT=""
 }
 
@@ -272,6 +251,7 @@ _stop_cleanup() {
 main() {
   trap _stop_cleanup EXIT
 
+  # shellcheck disable=SC2034
   local VERBOSE
   VERBOSE=$(_config_read_single "$CONFIG" "verbose" "false")
 
@@ -279,14 +259,14 @@ main() {
   SESSION_ID=$(stop::resolve_session_id)
 
   local CHECK_RESULT
-  CHECK_RESULT=$(stop::check_prerequisites "$VERBOSE" "$SESSION_ID")
+  CHECK_RESULT=$(stop::check_prerequisites "$SESSION_ID")
   if [[ "$CHECK_RESULT" == "no_session" ]] || [[ "$CHECK_RESULT" == "no_pid_file" ]] || [[ "$CHECK_RESULT" == "no_pid" ]] || [[ "$CHECK_RESULT" == "process_dead" ]]; then
     printf '{"continue": true}\n'
     exit 0
   fi
 
   local SESSION_PID="$CHECK_RESULT"
-  stop::attempt_rewind "$VERBOSE" "$SESSION_PID"
+  stop::attempt_rewind "$SESSION_PID"
   if [[ -n "$REWIND_RESULT" ]]; then
     printf '{"continue": true}\n'
     exit 0

@@ -28,17 +28,17 @@ cat ~/.claude/better-prompt.local.md 2>/dev/null || echo "File not found - will 
 
 Explain each setting and its purpose:
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `enabled` | boolean | `true` | Global on/off switch for the entire plugin |
-| `correction` | boolean | `true` | Enable grammar and spelling correction stage |
-| `correction_model` | string | `haiku` | Model to use for correction (haiku, sonnet, opus) |
-| `translation` | boolean | `false` | Enable translation of non-English prompts to English |
-| `translation_model` | string | `haiku` | Model to use for translation (haiku, sonnet, opus) |
-| `enhancement` | boolean | `false` | Enable prompt enhancement stage |
-| `enhancement_model` | string | `sonnet` | Model to use for enhancement (haiku, sonnet, opus) |
-| `audit` | boolean | `true` | Enable audit logging of original prompts |
-| `verbose` | boolean | `false` | Show intermediate steps (correction, enhancement) |
+| Setting             | Type    | Default  | Description                                          |
+| ------------------- | ------- | -------- | ---------------------------------------------------- |
+| `enabled`           | boolean | `true`   | Global on/off switch for the entire plugin           |
+| `correction`        | boolean | `true`   | Enable grammar and spelling correction stage         |
+| `correction_model`  | string  | `haiku`  | Model to use for correction (haiku, sonnet, opus)    |
+| `translation`       | boolean | `false`  | Enable translation of non-English prompts to English |
+| `translation_model` | string  | `haiku`  | Model to use for translation (haiku, sonnet, opus)   |
+| `enhancement`       | boolean | `false`  | Enable prompt enhancement stage                      |
+| `enhancement_model` | string  | `sonnet` | Model to use for enhancement (haiku, sonnet, opus)   |
+| `audit`             | boolean | `true`   | Enable audit logging of original prompts             |
+| `verbose`           | boolean | `false`  | Show intermediate steps (correction, enhancement)    |
 
 ## Interactive Configuration
 
@@ -72,6 +72,7 @@ The file can contain additional content below the frontmatter (user notes, etc.)
 ## Quick Actions
 
 Suggest quick actions to the user:
+
 - "View current settings" - Read and display the settings file
 - "Reset to defaults" - Create default settings file
 - "Enable verbose mode" - Set verbose to true
@@ -82,6 +83,7 @@ Suggest quick actions to the user:
 
 ## Tips
 
+- This command is handled natively by the `UserPromptExpansion` hook when arguments are provided (instant execution, no LLM processing). The instructions above serve as a fallback and handle interactive mode when no arguments are given.
 - Settings are read each time a prompt is submitted
 - Changes take effect immediately (no restart required)
 - The settings file can be edited manually with any text editor

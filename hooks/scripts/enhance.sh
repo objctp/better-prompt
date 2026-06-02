@@ -20,51 +20,14 @@ CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
 # shellcheck disable=SC2034
 readonly PLUGIN_ROOT CONFIG
 
-# shellcheck source=lib/config.sh
-source "${PLUGIN_ROOT}/hooks/scripts/lib/config.sh"
+# shellcheck source=lib/common.sh
+source "${PLUGIN_ROOT}/hooks/scripts/lib/common.sh"
 
-if [[ -z "${IS_MACOS:-}" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    IS_MACOS=true
-  else
-    IS_MACOS=false
-  fi
-fi
+_detect_os
 
 ###
 ### :::: Private Functions :::: ########
 ###
-
-_warn() {
-  printf '[better-prompt] WARNING: %s\n' "$*" >&2
-  return 0
-}
-
-_debug() {
-  if [[ "${VERBOSE:-false}" == "true" ]]; then
-    printf '[better-prompt] DEBUG: %s\n' "$*" >&2
-  fi
-  return 0
-}
-
-_json_escape() {
-  local input="$1"
-  if command -v jq &>/dev/null; then
-    printf '%s' "$input" | jq -Rs .
-  else
-    printf '%s' "$input" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
-  fi
-  return 0
-}
-
-# temp + rename prevents partial reads from concurrent processes
-_atomic_write() {
-  local target="$1" content="$2"
-  local tmp
-  tmp=$(mktemp "${target}.XXXXXX") || return 1
-  printf '%s' "$content" >"$tmp" && mv -f "$tmp" "$target"
-  return 0
-}
 
 # Extract the last N prior prompts from the context file as a numbered list.
 # Prints nothing when file is missing or count is 0.
@@ -98,12 +61,6 @@ enhance::append_prior_context() {
   return 0
 }
 
-# macOS md5 prints only the digest; GNU md5sum appends the filename
-_md5() {
-  printf '%s' "$1" | (md5 2>/dev/null || md5sum 2>/dev/null | cut -c1-32)
-  return 0
-}
-
 # Accumulate cost and usage from a --output-format json response into the
 # pipeline state nameref.  Arguments:
 #   $1 - nameref (associative array with COST_USD, INPUT_TOKENS, OUTPUT_TOKENS)
@@ -125,17 +82,6 @@ _accumulate_cost() {
   _ac_st[COST_USD]=$(awk "BEGIN {printf \"%.6f\", (${_ac_st[COST_USD]:-0}) + $stage_cost}")
   _ac_st[INPUT_TOKENS]="$((${_ac_st[INPUT_TOKENS]:-0} + stage_input))"
   _ac_st[OUTPUT_TOKENS]="$((${_ac_st[OUTPUT_TOKENS]:-0} + stage_output))"
-  return 0
-}
-
-_read_stdin_payload() {
-  # Must run before any subshell consumes stdin
-  # Payload format: { "prompt": "...", "session_id": "...", ... }
-  local payload=""
-  if [[ ! -t 0 ]]; then
-    payload=$(cat)
-  fi
-  printf '%s' "$payload"
   return 0
 }
 
@@ -674,15 +620,12 @@ main() {
   fi
 
   local STDIN_PAYLOAD ORIGINAL_PROMPT
-  STDIN_PAYLOAD=$(_read_stdin_payload)
+  STDIN_PAYLOAD=$(_read_payload)
   ORIGINAL_PROMPT=$(enhance::extract_prompt "$STDIN_PAYLOAD")
 
   declare -A _CFG=()
   _parse_config
   enhance::load_settings
-
-  # Clean up orphaned session file from previous --resume mechanism
-  rm -f "${RUNTIME_DIR}/.enhance-session"
 
   local SESSION_ID
   SESSION_ID=$(enhance::resolve_session_id "$STDIN_PAYLOAD")

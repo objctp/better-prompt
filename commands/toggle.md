@@ -20,14 +20,14 @@ If no [on|off] argument is provided, toggle the current state (flip it).
 
 ## Available Stages
 
-| Stage | Description |
-|-------|-------------|
-| `enabled` | Global on/off switch for the entire plugin |
-| `correction` | Grammar and spelling correction stage |
-| `translation` | Translation of non-English prompts to English |
-| `enhancement` | Prompt enhancement stage |
-| `audit` | Audit logging of original prompts |
-| `verbose` | Show intermediate steps (correction, enhancement) |
+| Stage         | Description                                       |
+| ------------- | ------------------------------------------------- |
+| `enabled`     | Global on/off switch for the entire plugin        |
+| `correction`  | Grammar and spelling correction stage             |
+| `translation` | Translation of non-English prompts to English     |
+| `enhancement` | Prompt enhancement stage                          |
+| `audit`       | Audit logging of original prompts                 |
+| `verbose`     | Show intermediate steps (correction, enhancement) |
 
 ## Examples
 
@@ -65,6 +65,7 @@ Always display the result:
 
 ## Notes
 
+- This command is handled natively by the `UserPromptExpansion` hook when available (instant execution, no LLM processing). The instructions above serve as a fallback.
 - Changes take effect immediately (no restart required)
 - When `enabled` is OFF, all other stages are inactive regardless of their settings
 - Use the config command for more detailed configuration

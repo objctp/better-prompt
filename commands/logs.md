@@ -19,11 +19,11 @@ The audit log is located at `<project-root>/.claude/better-prompt/audit.json`
 
 The command accepts a single optional argument:
 
-| Argument | Description |
-|----------|-------------|
+| Argument     | Description                |
+| ------------ | -------------------------- |
 | `N` (number) | Display the last N entries |
-| `--clear` | Delete the audit log file |
-| *(none)* | Display the last entry |
+| `--clear`    | Delete the audit log file  |
+| _(none)_     | Display the last entry     |
 
 ## Clearing Logs
 
@@ -82,6 +82,7 @@ Display each log entry in a readable format:
 ## Handling Empty/Missing Logs
 
 If the log file doesn't exist or is empty:
+
 - Inform the user that no audit logs are available yet
 - Check if audit logging is enabled in settings
 - Suggest enabling audit logging if disabled
@@ -89,12 +90,14 @@ If the log file doesn't exist or is empty:
 ## Additional Information
 
 Show summary statistics if available:
+
 - Total entries logged
 - Most common mistake types
 - Date range of logs
 
 ## Tips
 
+- This command is handled natively by the `UserPromptExpansion` hook (instant execution, no LLM processing). The instructions above serve as a fallback.
 - Use `jq` for powerful filtering and analysis of the JSON log
 - Punctuation corrections are NOT classified as mistakes (by design)
 - Original prompts are logged BEFORE any correction or enhancement

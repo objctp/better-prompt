@@ -1,6 +1,6 @@
 {
   "name": "better-prompt",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Automatically corrects and enhances user prompts before submission to Claude",
   "author": {
     "name": "objct",
