@@ -78,6 +78,11 @@ _accumulate_cost() {
   stage_input=$(printf '%s' "$raw_json" | jq -r '.usage.input_tokens // 0' 2>/dev/null) || stage_input="0"
   stage_output=$(printf '%s' "$raw_json" | jq -r '.usage.output_tokens // 0' 2>/dev/null) || stage_output="0"
 
+  # Sanitise: ensure all values are numeric before arithmetic / awk interpolation
+  [[ "$stage_cost" =~ ^[0-9]*\.?[0-9]+$ ]] || stage_cost="0"
+  [[ "$stage_input" =~ ^[0-9]+$ ]] || stage_input="0"
+  [[ "$stage_output" =~ ^[0-9]+$ ]] || stage_output="0"
+
   # Use awk for float addition (avoids bc dependency)
   _ac_st[COST_USD]=$(awk "BEGIN {printf \"%.6f\", (${_ac_st[COST_USD]:-0}) + $stage_cost}")
   _ac_st[INPUT_TOKENS]="$((${_ac_st[INPUT_TOKENS]:-0} + stage_input))"
@@ -177,12 +182,8 @@ enhance::run_correction() {
 
   _debug "Running correction with model: $correction_model"
 
-  local correction_prompt="Correct the following prompt in terms of grammar and make it clear in context. Return ONLY the raw JSON object — no markdown, no code blocks.
-
-Prompt: $working_prompt"
-
   local correction_result=""
-  correction_result=$(printf '%s' "$correction_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-correction --model "$correction_model" 2>&1) || {
+  correction_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-correction --model "$correction_model" 2>&1) || {
     _warn "Correction stage failed: $correction_result"
     correction_result=""
   }
@@ -220,12 +221,8 @@ enhance::run_translation() {
 
   _debug "Running translation with model: $translation_model"
 
-  local translation_prompt="Translate the following text to English if it is not already in English. If it is already in English, return it unchanged. Preserve @mentions, code identifiers, and technical terms exactly. Return ONLY the translated or unchanged text.
-
-Text: $working_prompt"
-
   local translation_result=""
-  translation_result=$(printf '%s' "$translation_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-translation --model "$translation_model" 2>&1) || {
+  translation_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-translation --model "$translation_model" 2>&1) || {
     _warn "Translation stage failed: $translation_result"
     translation_result=""
   }
@@ -260,22 +257,19 @@ enhance::run_enhancement_stage() {
   local prior_context=""
   prior_context=$(enhance::extract_prior_context "$context_file" "$context_count")
 
-  local enhance_prompt="Enhance the following prompt. Return ONLY the enhanced prompt text — no explanation, no preamble, no quotes."
+  local enhance_input=""
 
   if [[ -n "$prior_context" ]]; then
-    enhance_prompt+="
+    enhance_input+="Prior prompts in this session:
+$prior_context
 
-Prior prompts in this session:
-$prior_context"
+"
   fi
 
-  enhance_prompt+="
-
-Prompt:
-$working_prompt"
+  enhance_input+="$working_prompt"
 
   local enhance_json=""
-  enhance_json=$(printf '%s' "$enhance_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
+  enhance_json=$(printf '%s' "$enhance_input" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
     _warn "Enhancement stage failed: $enhance_json"
     enhance_json=""
   }
@@ -540,28 +534,28 @@ enhance::run_pipeline() {
 
   # When enhancement is enabled without translation, correction is redundant —
   # enhancement subsumes grammar/spelling fixes and no language detection is needed.
-  local _skip_correction="false"
+  local skip_correction="false"
   if [[ "$enhancement" == "true" ]] && [[ "$translation" != "true" ]] && [[ "$correction" == "true" ]]; then
-    _skip_correction="true"
+    skip_correction="true"
     _debug "Enhancement enabled without translation — skipping correction (enhancement subsumes it)"
   fi
 
   # When translation is enabled without correction, still run the correction
   # agent to detect language — then discard corrections so the user's original
   # wording is preserved.  This avoids an extra claude -p invocation.
-  local _correction_only_for_language="false"
+  local correction_only_for_language="false"
   if [[ "$translation" == "true" ]] && [[ "$correction" != "true" ]] && [[ -z "${_pl_st[DETECTED_LANGUAGE]:-}" ]]; then
-    _correction_only_for_language="true"
+    correction_only_for_language="true"
     _debug "Translation enabled without correction — running correction agent for language detection only"
   fi
 
-  if [[ "$_skip_correction" != "true" ]] && { [[ "$correction" == "true" ]] || [[ "$_correction_only_for_language" == "true" ]]; }; then
-    local _pre_prompt="${_pl_st[WORKING_PROMPT]}"
+  if [[ "$skip_correction" != "true" ]] && { [[ "$correction" == "true" ]] || [[ "$correction_only_for_language" == "true" ]]; }; then
+    local pre_prompt="${_pl_st[WORKING_PROMPT]}"
     enhance::run_correction "$1" "$correction_model"
 
-    if [[ "$_correction_only_for_language" == "true" ]]; then
+    if [[ "$correction_only_for_language" == "true" ]]; then
       # Discard corrections — restore original wording, keep only language
-      _pl_st[WORKING_PROMPT]="$_pre_prompt"
+      _pl_st[WORKING_PROMPT]="$pre_prompt"
       _pl_st[CORRECTIONS_JSON]="[]"
       _pl_st[MISTAKE_NATURE_JSON]="[]"
       _debug "Language-only correction done (detected: ${_pl_st[DETECTED_LANGUAGE]}), corrections discarded"
@@ -623,8 +617,9 @@ main() {
   STDIN_PAYLOAD=$(_read_payload)
   ORIGINAL_PROMPT=$(enhance::extract_prompt "$STDIN_PAYLOAD")
 
-  declare -A _CFG=()
-  _parse_config
+  # shellcheck disable=SC2034
+  declare -A cfg=()
+  _parse_config cfg
   enhance::load_settings
 
   local SESSION_ID
@@ -637,20 +632,21 @@ main() {
     exit 0
   fi
 
-  declare -A _PS=()
-  _PS[WORKING_PROMPT]="$ORIGINAL_PROMPT"
-  _PS[CORRECTED_PROMPT]="$ORIGINAL_PROMPT"
-  _PS[ENHANCED_PROMPT]=""
-  _PS[CORRECTIONS_JSON]="[]"
-  _PS[MISTAKE_NATURE_JSON]="[]"
-  _PS[DETECTED_LANGUAGE]=""
+  declare -A pipeline_state=()
+  pipeline_state[WORKING_PROMPT]="$ORIGINAL_PROMPT"
+  pipeline_state[CORRECTED_PROMPT]="$ORIGINAL_PROMPT"
+  pipeline_state[ENHANCED_PROMPT]=""
+  pipeline_state[CORRECTIONS_JSON]="[]"
+  pipeline_state[MISTAKE_NATURE_JSON]="[]"
+  # shellcheck disable=SC2034
+  pipeline_state[DETECTED_LANGUAGE]=""
 
-  enhance::run_pipeline _PS \
+  enhance::run_pipeline pipeline_state \
     "$CORRECTION" "$CORRECTION_MODEL" \
     "$TRANSLATION" "$TRANSLATION_MODEL" \
     "$ENHANCEMENT" "$ENHANCEMENT_MODEL"
 
-  enhance::finalize _PS "$ORIGINAL_PROMPT" "$SESSION_ID"
+  enhance::finalize pipeline_state "$ORIGINAL_PROMPT" "$SESSION_ID"
 
   exit 0
 }

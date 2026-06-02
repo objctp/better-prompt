@@ -66,10 +66,8 @@ config::validate_value() {
     esac
     ;;
   model)
-    case "$value" in
-    haiku | sonnet | opus) return 0 ;;
-    *) return 1 ;;
-    esac
+    [[ "$value" =~ ^[a-zA-Z0-9._:-]+$ ]] && return 0
+    return 1
     ;;
   esac
   return 1
@@ -128,7 +126,7 @@ main() {
 Settings: enabled, correction, correction_model, translation, translation_model, enhancement, enhancement_model, audit, verbose
 
 Boolean values: true/false, on/off, yes/no
-Model values: haiku, sonnet, opus
+Model values: any valid model name or ID (e.g. haiku, sonnet, opus)
 
 Use /better-prompt:config (no args) for interactive mode."
     exit 0
@@ -150,7 +148,7 @@ Available settings: enabled, correction, correction_model, translation, translat
     if [[ "$type" == "boolean" ]]; then
       hint="Expected: true/false, on/off, or yes/no"
     else
-      hint="Expected: haiku, sonnet, or opus"
+      hint="Expected: a valid model name or ID (alphanumeric, dot, dash, colon, underscore)"
     fi
     _format_block_response "Invalid value '$VALUE' for $SETTING ($type). $hint"
     exit 0

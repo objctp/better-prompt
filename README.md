@@ -10,7 +10,7 @@ Automatically corrects and enhances user prompts before they reach Claude.
 - **Transparent operation** — the original prompt is blocked and replaced via session rewind; Claude sees only the improved version
 - **Audit logging** — records original prompts with mistake categorisation in NDJSON format
 - **Configurable stages** — enable/disable correction, translation, enhancement, and logging independently
-- **Model selection** — use different models for different stages (default: haiku for correction and translation, sonnet for enhancement)
+- **Model selection** — any valid model identifier (short name or full ID) per stage; compatible with Claude Code and OpenCode
 
 ## Prerequisites
 

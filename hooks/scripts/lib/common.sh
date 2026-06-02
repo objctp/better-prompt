@@ -116,12 +116,14 @@ _format_block_response() {
 ### :::: Config Functions :::: ###########
 ###
 
-# Sources YAML frontmatter from a markdown config file into the _CFG associative array.
+# Sources YAML frontmatter from a markdown config file into an associative array.
 #
+# Arguments:
+#   $1 - nameref of the associative array to populate
 # Requires:
-#   _CFG associative array (declare -A _CFG=())
 #   CONFIG file path variable
 _parse_config() {
+  local -n _pc_cfg="$1"
   if [[ ! -f "$CONFIG" ]]; then
     return 0
   fi
@@ -140,7 +142,7 @@ _parse_config() {
     val="${line#*:}"
     val="${val#"${val%%[![:space:]]*}"}"
     val="${val%"${val##*[![:space:]]}"}"
-    _CFG["$key"]="$val"
+    _pc_cfg["$key"]="$val"
   done <"$CONFIG"
   return 0
 }

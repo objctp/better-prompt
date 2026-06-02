@@ -8,7 +8,9 @@ set -euo pipefail
 
 CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
 ACTIVE_SESSIONS_DIR="${BETTER_PROMPT_SESSIONS_DIR:-$HOME/.claude/sessions}"
-readonly CONFIG ACTIVE_SESSIONS_DIR
+RUNTIME_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/better-prompt"
+# shellcheck disable=SC2034
+readonly CONFIG ACTIVE_SESSIONS_DIR RUNTIME_DIR
 
 _DEBUG_PREFIX="[better-prompt-stop]"
 # shellcheck source=lib/common.sh
@@ -214,14 +216,14 @@ stop::check_prerequisites() {
 # Side effects: sets REWIND_RESULT global — empty on success, "clipboard_empty" or
 # "rewind_failed" on failure. Reads system clipboard and sends keystrokes.
 # Arguments:
-#   $1 - debug: "true"/"false" for debug output
-#   $2 - session_pid: PID of the Claude session (for liveness check)
+#   $1 - session_pid: PID of the Claude session (for liveness check)
 stop::attempt_rewind() {
   local session_pid="$1"
+  local clipboard_content
 
-  CLIPBOARD_CONTENT=$(stop::read_clipboard)
+  clipboard_content=$(stop::read_clipboard)
 
-  if [[ -z "$CLIPBOARD_CONTENT" ]]; then
+  if [[ -z "$clipboard_content" ]]; then
     _debug "Clipboard empty — cannot inject enhanced prompt"
     _debug "The enhanced prompt was included in the block reason; check the Claude response above."
     REWIND_RESULT="clipboard_empty"
@@ -243,7 +245,7 @@ stop::attempt_rewind() {
 ###
 
 _stop_cleanup() {
-  local pid_file="${CLAUDE_PROJECT_DIR:-.}/.claude/better-prompt/.stop-pid"
+  local pid_file="${RUNTIME_DIR}/.stop-pid"
   rm -f "$pid_file" 2>/dev/null
   return 0
 }
