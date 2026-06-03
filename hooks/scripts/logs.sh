@@ -32,25 +32,28 @@ logs::format_entry() {
   local entry="$1"
   local index="$2"
 
-  if ! command -v jq &>/dev/null; then
+  # Single jq pass: extract all display fields in one invocation (was 6 separate jq calls).
+  # Uses unit separator (ASCII 31) as delimiter — safe for natural language text.
+  local parsed
+  parsed=$(jq -r --arg sep $'\x1f' '
+    [
+      .date // "unknown",
+      .prompt // "",
+      .corrected // "",
+      .enhanced // "",
+      (."mistake-nature" // [] | if type == "array" then join(", ") else . end),
+      (.models // {} | to_entries | map(select(.value != null)) | map("\(.key)=\(.value)") | join(", ")),
+      (.mistakes // [] | if type == "array" then map("\(.type): \"\(.original)\" -> \"\(.correction)\"") | join("; ") else . end)
+    ] | join($sep)
+  ' <<<"$entry" 2>/dev/null) || parsed=""
+
+  if [[ -z "$parsed" ]]; then
     printf 'Entry #%s\n%s\n' "$index" "$entry"
     return 0
   fi
 
-  local date prompt corrected enhanced nature models
-  date=$(printf '%s' "$entry" | jq -r '.date // "unknown"' 2>/dev/null)
-  prompt=$(printf '%s' "$entry" | jq -r '.prompt // ""' 2>/dev/null)
-  corrected=$(printf '%s' "$entry" | jq -r '.corrected // ""' 2>/dev/null)
-  enhanced=$(printf '%s' "$entry" | jq -r '.enhanced // ""' 2>/dev/null)
-  nature=$(printf '%s' "$entry" | jq -r '."mistake-nature" // [] | if type == "array" then join(", ") else . end' 2>/dev/null)
-  models=$(printf '%s' "$entry" | jq -r '.models // {} | to_entries | map(select(.value != null)) | map("\(.key)=\(.value)") | join(", ")' 2>/dev/null)
-
-  local mistakes
-  mistakes=$(printf '%s' "$entry" | jq -r '
-    .mistakes // [] | if type == "array" then
-      map("\(.type): \"\(.original)\" -> \"\(.correction)\"") | join("; ")
-    else . end
-  ' 2>/dev/null)
+  local date prompt corrected enhanced nature models mistakes
+  IFS=$'\x1f' read -r date prompt corrected enhanced nature models mistakes <<<"$parsed"
 
   printf 'Entry #%s\n' "$index"
   printf 'Date:      %s\n' "$date"

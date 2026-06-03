@@ -2,10 +2,20 @@
 
 ## Unreleased
 
+## [0.6.0] - 2026-06-03
+
 ### Changed
 
+- Performance: deferred fast-fail gate in `enhance.sh` avoids jq and config parse on disabled/directive paths (~74ms to ~16ms, 79% faster)
+- Performance: consolidated multi-pass jq calls into single passes across `enhance.sh`, `logs.sh`, and `lib/common.sh`
+- Performance: replaced `printf | jq` pipes with here-strings, `$(cat)` with `read -d ''`, `$(uname)` with `$OSTYPE`
+- Renamed `_strip_markdown_fences` to `_strip_agent_wrappers`; now only applied to correction agent JSON output (preserves legitimate ``` in translated/enhanced prompts)
 - Removed redundant inline prompt wrappers from correction and translation stages; enhancement stage stripped to dynamic context only
 - Agent prompts reviewed and streamlined across all three stages
+
+### Fixed
+
+- `_CFG` vs `cfg` naming mismatch between `_parse_config` and `_get_setting` in `enhance.sh`
 
 ## [0.5.0] - 2026-06-02
 

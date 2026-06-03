@@ -19,9 +19,10 @@
 ###
 
 # Detect macOS and set IS_MACOS variable.
+# Uses OSTYPE (bash builtin) to avoid spawning uname.
 _detect_os() {
   if [[ -z "${IS_MACOS:-}" ]]; then
-    if [[ "$(uname -s)" == "Darwin" ]]; then
+    if [[ "$OSTYPE" == darwin* ]]; then
       IS_MACOS=true
     else
       IS_MACOS=false
@@ -55,11 +56,9 @@ _debug() {
 
 _json_escape() {
   local input="$1"
-  if command -v jq &>/dev/null; then
-    printf '%s' "$input" | jq -Rs .
-  else
-    printf '%s' "$input" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
-  fi
+  # Prefer jq for correct JSON escaping; avoid redundant command -v since
+  # callers already guarantee jq availability.
+  printf '%s' "$input" | jq -Rs .
   return 0
 }
 
@@ -87,10 +86,11 @@ _md5() {
 ###
 
 # Read JSON payload from stdin. Must run before any subshell consumes stdin.
+# Uses read -d '' to avoid spawning cat (builtin-only).
 _read_payload() {
   local payload=""
   if [[ ! -t 0 ]]; then
-    payload=$(cat)
+    read -r -d '' payload
   fi
   printf '%s' "$payload"
   return 0
@@ -99,7 +99,7 @@ _read_payload() {
 # Extract command_args from a hook payload JSON string.
 _extract_command_args() {
   local payload="$1"
-  printf '%s' "$payload" | jq -r '.command_args // empty' 2>/dev/null || true
+  jq -r '.command_args // empty' <<<"$payload" 2>/dev/null || true
   return 0
 }
 
