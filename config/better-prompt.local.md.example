@@ -18,7 +18,7 @@ translation_model: haiku
 enhancement: false
 enhancement_model: sonnet
 
-# Audit logging of original prompts
+# Audit trail of original prompts
 audit: true
 
 # Show intermediate steps (for debugging)
@@ -35,7 +35,7 @@ This file contains settings for the better-prompt plugin. Edit the YAML frontmat
 - `correction`: Fix grammar and spelling errors
 - `translation`: Translate non-English prompts into English before enhancement
 - `enhancement`: Improve clarity and specificity
-- `audit`: Log all pipeline stages with mistake analysis
+- `audit`: Trail of all pipeline stages with mistake analysis
 - `verbose`: Show intermediate steps
 
 ## Pipeline Order
@@ -58,6 +58,7 @@ Disabling a stage passes its input through unchanged.
 
 - Changes take effect immediately
 - Punctuation corrections are applied but NOT classified as mistakes
-- The audit log records every stage (`corrected`, `translated`, `enhanced`) and is `null` for disabled stages' models — it grows indefinitely, so consider archiving if needed
+- The audit trail records every stage (`corrected`, `translated`, `enhanced`) and is `null` for disabled stages' models — it grows indefinitely, so consider archiving if needed
 - Use `/better-prompt:config` for interactive configuration
 - Use `/better-prompt:toggle` for quick on/off of specific stages
+- Use `/better-prompt:audit` to display or clear the audit trail

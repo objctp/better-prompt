@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+## [0.7.0] - 2026-06-03
+
 ### Changed
 
 - Block notification now shows truncated prompt previews (`[+N lines]`) instead of full text in the `reason` field
+- Verbose token display now includes cache creation (w) and cache read (r) breakdowns
+- Verbose debug output now shows buffered pipeline stage messages
+- Sub-agent invocations use `--no-session-persistence` to avoid writing unused session transcripts
+- Renamed `/better-prompt:logs` to `/better-prompt:audit` for consistency with the `audit` config setting
 
 ## [0.6.0] - 2026-06-03
 

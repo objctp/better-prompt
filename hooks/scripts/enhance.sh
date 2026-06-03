@@ -75,21 +75,25 @@ _accumulate_cost() {
 
   # Single jq pass: extract cost and token counts, delimited by tab.
   local parsed
-  parsed=$(jq -r '[.total_cost_usd // 0, (.usage.input_tokens // 0), (.usage.output_tokens // 0)] | @tsv' \
-    <<<"$raw_json" 2>/dev/null) || parsed=$'0\t0\t0'
+  parsed=$(jq -r '[.total_cost_usd // 0, (.usage.input_tokens // 0), (.usage.output_tokens // 0), (.usage.cache_creation_input_tokens // 0), (.usage.cache_read_input_tokens // 0)] | @tsv' \
+    <<<"$raw_json" 2>/dev/null) || parsed=$'0\t0\t0\t0\t0'
 
-  local stage_cost stage_input stage_output
-  IFS=$'\t' read -r stage_cost stage_input stage_output <<<"$parsed"
+  local stage_cost stage_input stage_output stage_cache_write stage_cache_read
+  IFS=$'\t' read -r stage_cost stage_input stage_output stage_cache_write stage_cache_read <<<"$parsed"
 
   # Sanitise: ensure all values are numeric before arithmetic / awk interpolation
   [[ "$stage_cost" =~ ^[0-9]*\.?[0-9]+$ ]] || stage_cost="0"
   [[ "$stage_input" =~ ^[0-9]+$ ]] || stage_input="0"
   [[ "$stage_output" =~ ^[0-9]+$ ]] || stage_output="0"
+  [[ "$stage_cache_write" =~ ^[0-9]+$ ]] || stage_cache_write="0"
+  [[ "$stage_cache_read" =~ ^[0-9]+$ ]] || stage_cache_read="0"
 
   # Use awk for float addition (avoids bc dependency)
   _ac_st[COST_USD]=$(awk "BEGIN {printf \"%.6f\", (${_ac_st[COST_USD]:-0}) + $stage_cost}")
   _ac_st[INPUT_TOKENS]="$((${_ac_st[INPUT_TOKENS]:-0} + stage_input))"
   _ac_st[OUTPUT_TOKENS]="$((${_ac_st[OUTPUT_TOKENS]:-0} + stage_output))"
+  _ac_st[CACHE_WRITE_TOKENS]="$((${_ac_st[CACHE_WRITE_TOKENS]:-0} + stage_cache_write))"
+  _ac_st[CACHE_READ_TOKENS]="$((${_ac_st[CACHE_READ_TOKENS]:-0} + stage_cache_read))"
   return 0
 }
 
@@ -119,33 +123,6 @@ _extract_payload_fields() {
     _warn "Invalid session ID format: $SESSION_ID_RESULT"
     SESSION_ID_RESULT=""
   fi
-  return 0
-}
-
-enhance::resolve_session_id() {
-  local payload="$1"
-  local session_id=""
-
-  if [[ -n "$payload" ]]; then
-    session_id=$(jq -r '.session_id // empty' <<<"$payload" 2>/dev/null) || session_id=""
-  fi
-
-  if [[ -z "$session_id" ]] && [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
-    session_id="$CLAUDE_SESSION_ID"
-  fi
-
-  if [[ -z "$session_id" ]]; then
-    _warn "No session ID found in payload or CLAUDE_SESSION_ID env — skipping prompt enhancement"
-  fi
-
-  if [[ -n "$session_id" ]]; then
-    if ! [[ "$session_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-      _warn "Invalid session ID format: $session_id"
-      session_id=""
-    fi
-  fi
-
-  printf '%s' "$session_id"
   return 0
 }
 
@@ -215,11 +192,10 @@ enhance::run_correction() {
   local working_prompt="${_cr_st[WORKING_PROMPT]}"
   local correction_model="$2"
 
-  _debug "Running correction with model: $correction_model"
-
   local correction_result=""
-  correction_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-correction --model "$correction_model" 2>&1) || {
+  correction_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-correction --model "$correction_model" 2>&1) || {
     _warn "Correction stage failed: $correction_result"
+    _debug "correction ($correction_model): stage failed"
     correction_result=""
   }
 
@@ -256,6 +232,15 @@ enhance::run_correction() {
 
   [[ -n "$corrected" ]] && _cr_st[WORKING_PROMPT]="$corrected"
   _cr_st[CORRECTED_PROMPT]="${_cr_st[WORKING_PROMPT]}"
+
+  local mistake_count
+  mistake_count=$(jq 'length' <<<"${_cr_st[CORRECTIONS_JSON]}" 2>/dev/null) || mistake_count=0
+  if [[ "$mistake_count" -gt 0 ]]; then
+    _debug "correction ($correction_model): $mistake_count mistakes fixed"
+  else
+    _debug "correction ($correction_model): no changes"
+  fi
+
   return 0
 }
 
@@ -264,11 +249,10 @@ enhance::run_translation() {
   local working_prompt="${_tr_st[WORKING_PROMPT]}"
   local translation_model="$2"
 
-  _debug "Running translation with model: $translation_model"
-
   local translation_result=""
-  translation_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-translation --model "$translation_model" 2>&1) || {
+  translation_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-translation --model "$translation_model" 2>&1) || {
     _warn "Translation stage failed: $translation_result"
+    _debug "translation ($translation_model): stage failed"
     translation_result=""
   }
 
@@ -277,11 +261,13 @@ enhance::run_translation() {
   if [[ -n "$translation_result" ]]; then
     local translated_text
     translated_text=$(jq -r '.result // empty' <<<"$translation_result" 2>/dev/null) || translated_text=""
-    # Fallback: if .result is empty, use raw output
     if [[ -z "$translated_text" ]]; then
       translated_text="$translation_result"
     fi
-    [[ -n "$translated_text" ]] && _tr_st[WORKING_PROMPT]="$translated_text"
+    if [[ -n "$translated_text" ]]; then
+      _tr_st[WORKING_PROMPT]="$translated_text"
+      _debug "translation ($translation_model): done"
+    fi
   fi
   return 0
 }
@@ -292,8 +278,6 @@ enhance::run_enhancement_stage() {
   local enhancement_model="$3"
   local context_file="$4"
   local context_count="$5"
-
-  _debug "Running enhancement with model: $enhancement_model"
 
   local prior_context=""
   prior_context=$(enhance::extract_prior_context "$context_file" "$context_count")
@@ -310,8 +294,9 @@ $prior_context
   enhance_input+="$working_prompt"
 
   local enhance_json=""
-  enhance_json=$(printf '%s' "$enhance_input" | BETTER_PROMPT_CHILD=1 claude -p --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
+  enhance_json=$(printf '%s' "$enhance_input" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
     _warn "Enhancement stage failed: $enhance_json"
+    _debug "enhancement ($enhancement_model): stage failed"
     enhance_json=""
   }
 
@@ -325,6 +310,13 @@ $prior_context
   fi
 
   [[ -z "$enhanced_result" ]] && enhanced_result="$working_prompt"
+
+  if [[ "$enhanced_result" != "$working_prompt" ]]; then
+    _debug "enhancement ($enhancement_model): done"
+  else
+    _debug "enhancement ($enhancement_model): no changes"
+  fi
+
   printf '%s' "$enhanced_result"
   return 0
 }
@@ -385,9 +377,9 @@ enhance::write_audit() {
   local audit_date
   audit_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   # shellcheck disable=SC2016
-  local -r audit_filter='{"date":$date,"prompt":$prompt,"language":$language,"corrected":$corrected,"enhanced":$enhanced,"mistake-nature":$nature,"mistakes":$mistakes,"models":{"correction":$correction_model,"translation":$translation_model,"enhancement":$enhancement_model}}'
+  local -r audit_filter='{"date":$date,"prompt":$prompt,"language":$language,"corrected":(if $correction_on then $corrected else null end),"enhanced":(if $enhancement_on then $enhanced else null end),"mistake-nature":$nature,"mistakes":$mistakes,"models":{"correction":$correction_model,"translation":$translation_model,"enhancement":$enhancement_model}}'
 
-  jq -nc --arg date "$audit_date" --arg prompt "$original_prompt" --argjson language "$audit_language" --arg corrected "$corrected_prompt" --arg enhanced "$enhanced_prompt" --argjson nature "$mistake_nature_json" --argjson mistakes "$corrections_json" --argjson correction_model "$audit_correction_model" --argjson enhancement_model "$audit_enhancement_model" --argjson translation_model "$audit_translation_model" "$audit_filter" >>"$audit_log"
+  jq -nc --arg date "$audit_date" --arg prompt "$original_prompt" --argjson language "$audit_language" --arg corrected "$corrected_prompt" --arg enhanced "$enhanced_prompt" --argjson correction_on "$correction" --argjson enhancement_on "$enhancement" --argjson nature "$mistake_nature_json" --argjson mistakes "$corrections_json" --argjson correction_model "$audit_correction_model" --argjson enhancement_model "$audit_enhancement_model" --argjson translation_model "$audit_translation_model" "$audit_filter" >>"$audit_log"
   return 0
 }
 
@@ -432,6 +424,9 @@ enhance::copy_to_clipboard() {
 #   $9 - cost_usd: accumulated cost string (e.g. "0.003210")
 #   $10 - input_tokens: accumulated input tokens
 #   $11 - output_tokens: accumulated output tokens
+#   $12 - cache_write_tokens: accumulated cache creation tokens
+#   $13 - cache_read_tokens: accumulated cache read tokens
+#   $14 - debug_log: buffered pipeline stage messages
 enhance::format_response() {
   local verbose="$1"
   local original_prompt="$2"
@@ -444,6 +439,9 @@ enhance::format_response() {
   local cost_usd="${9:-0}"
   local input_tokens="${10:-0}"
   local output_tokens="${11:-0}"
+  local cache_write_tokens="${12:-0}"
+  local cache_read_tokens="${13:-0}"
+  local debug_log="${14:-}"
 
   # Always include the full enhanced prompt so the user can verify what was
   # sent, even when rewind fails (clipboard clobbered, permission denied, etc.).
@@ -456,24 +454,29 @@ enhance::format_response() {
   preview_enhanced=$(_truncate_for_display "$enhanced_prompt")
 
   if [[ "$verbose" == "true" ]]; then
-    local debug_msg="[Better Prompt Debug]\nOriginal:   $preview_original"
+    local debug_msg="[Better Prompt Debug]\n Original:   $preview_original"
+    [[ -n "$debug_log" ]] && debug_msg+="\n$debug_log"
     if [[ "$correction" == "true" ]]; then
       local preview_corrected
       preview_corrected=$(_truncate_for_display "$corrected_prompt")
-      debug_msg+="\nCorrected:  $preview_corrected"
+      debug_msg+="\n Corrected:  $preview_corrected"
     fi
     if [[ "$translation" == "true" ]]; then
-      debug_msg+="\nLanguage:   ${DETECTED_LANGUAGE:-en}"
+      debug_msg+="\n Language:   ${DETECTED_LANGUAGE:-en}"
       if [[ "${DETECTED_LANGUAGE:-en}" != "en" ]]; then
         local preview_working
         preview_working=$(_truncate_for_display "$working_prompt")
-        debug_msg+="\nTranslated: $preview_working"
+        debug_msg+="\n Translated: $preview_working"
       fi
     fi
-    [[ "$enhancement" == "true" ]] && debug_msg+="\nEnhanced:   $preview_enhanced"
+    [[ "$enhancement" == "true" ]] && debug_msg+="\n Enhanced:   $preview_enhanced"
     if [[ -n "$cost_usd" ]] && [[ "$cost_usd" != "0" ]] && [[ "$cost_usd" != "0.000000" ]]; then
-      debug_msg+="\nCost:       \$$(printf '%.6f' "$cost_usd")"
-      debug_msg+="\nTokens:     ${input_tokens} in / ${output_tokens} out"
+      debug_msg+="\n Cost:       \$$(printf '%.6f' "$cost_usd")"
+      local token_line="${input_tokens} in"
+      [[ "$cache_write_tokens" != "0" ]] && token_line+=" (${cache_write_tokens} w)"
+      token_line+=" / ${output_tokens} out"
+      [[ "$cache_read_tokens" != "0" ]] && token_line+=" (${cache_read_tokens} r)"
+      debug_msg+="\n Tokens:     $token_line"
     fi
     debug_msg=$(printf '%b' "$debug_msg")
     local escaped_debug
@@ -560,7 +563,7 @@ enhance::should_skip() {
     return 0
   fi
 
-  # No stages active — nothing to enhance, pass through without blocking.
+  # Pass through without blocking.
   if [[ "$correction" != "true" ]] && [[ "$translation" != "true" ]] && [[ "$enhancement" != "true" ]]; then
     _debug "All stages disabled — passing through"
     printf 'no_stages'
@@ -584,13 +587,16 @@ enhance::run_pipeline() {
   _pl_st[COST_USD]="0"
   _pl_st[INPUT_TOKENS]="0"
   _pl_st[OUTPUT_TOKENS]="0"
+  _pl_st[CACHE_WRITE_TOKENS]="0"
+  _pl_st[CACHE_READ_TOKENS]="0"
+  _DEBUG_LOG=""
 
   # When enhancement is enabled without translation, correction is redundant —
   # enhancement subsumes grammar/spelling fixes and no language detection is needed.
   local skip_correction="false"
   if [[ "$enhancement" == "true" ]] && [[ "$translation" != "true" ]] && [[ "$correction" == "true" ]]; then
     skip_correction="true"
-    _debug "Enhancement enabled without translation — skipping correction (enhancement subsumes it)"
+    _debug "correction: skipped (enhancement subsumes it)"
   fi
 
   # When translation is enabled without correction, still run the correction
@@ -599,7 +605,6 @@ enhance::run_pipeline() {
   local correction_only_for_language="false"
   if [[ "$translation" == "true" ]] && [[ "$correction" != "true" ]] && [[ -z "${_pl_st[DETECTED_LANGUAGE]:-}" ]]; then
     correction_only_for_language="true"
-    _debug "Translation enabled without correction — running correction agent for language detection only"
   fi
 
   if [[ "$skip_correction" != "true" ]] && { [[ "$correction" == "true" ]] || [[ "$correction_only_for_language" == "true" ]]; }; then
@@ -611,14 +616,14 @@ enhance::run_pipeline() {
       _pl_st[WORKING_PROMPT]="$pre_prompt"
       _pl_st[CORRECTIONS_JSON]="[]"
       _pl_st[MISTAKE_NATURE_JSON]="[]"
-      _debug "Language-only correction done (detected: ${_pl_st[DETECTED_LANGUAGE]}), corrections discarded"
+      _debug "language detection ($correction_model): ${_pl_st[DETECTED_LANGUAGE]}"
     fi
   fi
   _pl_st[CORRECTED_PROMPT]="${_pl_st[WORKING_PROMPT]}"
 
   if [[ "$translation" == "true" ]]; then
     if [[ -n "${_pl_st[DETECTED_LANGUAGE]:-}" && "${_pl_st[DETECTED_LANGUAGE]}" == "en" ]]; then
-      _debug "Prompt is English — skipping translation"
+      _debug "translation ($translation_model): skipped (english)"
     else
       enhance::run_translation "$1" "$translation_model"
     fi
@@ -647,17 +652,14 @@ enhance::finalize() {
   fi
 
   enhance::write_sentinel "$SENTINEL" "$final_prompt"
+  enhance::copy_to_clipboard "$final_prompt"
+  _debug "clipboard: final prompt copied"
+  enhance::spawn_stop_hook "$session_id"
   enhance::format_response "$VERBOSE" "$original_prompt" "${_fn_st[CORRECTED_PROMPT]}" "${_fn_st[WORKING_PROMPT]}" "$final_prompt" \
     "$CORRECTION" "$TRANSLATION" "$ENHANCEMENT" \
-    "${_fn_st[COST_USD]:-0}" "${_fn_st[INPUT_TOKENS]:-0}" "${_fn_st[OUTPUT_TOKENS]:-0}"
-  enhance::copy_to_clipboard "$final_prompt"
-  _debug "Original prompt blocked; final prompt copied to clipboard for rewind"
-  enhance::spawn_stop_hook "$session_id"
+    "${_fn_st[COST_USD]:-0}" "${_fn_st[INPUT_TOKENS]:-0}" "${_fn_st[OUTPUT_TOKENS]:-0}" \
+    "${_fn_st[CACHE_WRITE_TOKENS]:-0}" "${_fn_st[CACHE_READ_TOKENS]:-0}" "${_DEBUG_LOG:-}"
 }
-
-###
-### :::: Main :::: #####################
-###
 
 ###
 ### :::: Fast-Fail Gate :::: ############
@@ -674,7 +676,6 @@ _fast_fail_gate() {
   fi
   _FF_PAYLOAD="$payload"
 
-  # No payload — outside a hook context
   [[ -z "$payload" ]] && return 0
 
   # Quick enabled check — scan config frontmatter with bash builtins only.
@@ -697,7 +698,6 @@ _fast_fail_gate() {
     done <"$CONFIG"
   fi
 
-  # Plugin disabled — pass through without jq, without full config parse
   if [[ "$enabled" == "false" ]]; then
     return 0
   fi
@@ -711,15 +711,13 @@ _fast_fail_gate() {
   fi
   local first_char="${after:0:1}"
   if [[ -z "$first_char" ]]; then
-    # Empty prompt
     return 0
   fi
   if [[ "$first_char" == "/" || "$first_char" == "!" ]]; then
-    # Directive — pass through
     return 0
   fi
 
-  # All fast-fail checks passed — the full pipeline is needed
+  # No fast-fail condition matched — proceed to full pipeline
   return 1
 }
 
@@ -728,7 +726,6 @@ _fast_fail_gate() {
 ###
 
 main() {
-  # Fast-fail gate: bash-only checks avoid jq and config parse on common paths.
   # On disabled/directive/empty prompts (~90% of invocations), this exits in ~15ms
   # instead of ~49ms by skipping jq process spawn and full YAML parsing.
   if _fast_fail_gate; then
@@ -744,7 +741,6 @@ main() {
 
   local STDIN_PAYLOAD="$_FF_PAYLOAD"
 
-  # Single jq pass extracts both prompt and session_id (was two separate jq calls).
   # shellcheck disable=SC2034
   _extract_payload_fields "$STDIN_PAYLOAD"
   local ORIGINAL_PROMPT="$PROMPT_RESULT"

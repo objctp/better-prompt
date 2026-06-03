@@ -4,18 +4,24 @@ Automatically corrects and enhances user prompts before they reach Claude.
 
 ## Features
 
-- **Grammar and spelling correction** — fixes errors whilst preserving punctuation
-- **Translation** — translates non-English prompts to English before enhancement
-- **Prompt enhancement** — refines prompts for clarity and specificity using a configurable agent
-- **Transparent operation** — the original prompt is blocked and replaced via session rewind; Claude sees only the improved version
-- **Audit logging** — records original prompts with mistake categorisation in NDJSON format
-- **Configurable stages** — enable/disable correction, translation, enhancement, and logging independently
-- **Model selection** — any valid model identifier (short name or full ID) per stage; compatible with Claude Code and OpenCode
+Intercepts every prompt using hooks and runs it through a configurable three-stage pipeline before it reaches Claude:
+
+```
+original → [correction] → [translation] → [enhancement] → final
+```
+
+- **Correction** — fixes grammar and spelling whilst preserving intent, style, and punctuation
+- **Translation** — translates non-English prompts to English; passes English through unchanged
+- **Enhancement** — refines prompts for clarity, specificity, and structure
+
+Each stage can be enabled or disabled independently. Stages are optional — the plugin works with just correction, just enhancement, or any combination.
+
+At the final stage, the original prompt is blocked and replaced via session rewind — Claude sees only the improved version. Each stage can use a different model (any valid identifier — short name or full ID). An optional audit trail records original prompts with mistake categorisation in NDJSON format for future review.
 
 ## Prerequisites
 
-- Claude Code
-- [`jq`](https://jqlang.github.io/jq/) — required for JSON parsing and audit logging
+- Claude Code or OpenCode
+- [`jq`](https://jqlang.github.io/jq/) — required for JSON parsing and audit trail
 - Clipboard utility (for copying enhanced prompt):
   - **macOS**: `pbcopy` is built-in
   - **Linux**: install `xclip` or `xsel`
@@ -44,11 +50,21 @@ sudo pacman -S jq xclip ydotool
 **Claude Code:**
 
 ```bash
-/plugin marketplace add objctp/better-prompt
+# Install via in-session commands
+/plugin marketplace add objctp/objct-plugins
 /plugin install better-prompt@objct-plugins
+# Then start a new session for the plugin to function properly — run `/clear` command
+```
 
-# Local development
-git clone https://github.com/objctp/shell-routines && cd shell-routines && claude
+or
+
+```bash
+# Install via CLI command
+claude plugin marketplace add objctp/objct-plugins
+claude plugin install better-prompt@objct-plugins
+
+# Optionally run init hooks immediately (places default config, creates directories)
+claude --init-only
 ```
 
 **OpenCode:**
@@ -61,11 +77,6 @@ Add to your config — OpenCode auto-installs npm plugins via Bun at startup.
 
 // Global scope: ~/.config/opencode/opencode.json
 { "plugin": ["@objctp/opencode-better-prompt"] }
-```
-
-```bash
-# Local development
-git clone https://github.com/objctp/better-prompt && cd better-prompt && opencode
 ```
 
 On first run, the plugin copies `config/better-prompt.local.md.example` to `~/.claude/better-prompt.local.md` if no config file exists.
@@ -99,7 +110,7 @@ verbose: false
 | `translation_model` | string  | `haiku`  | Model used for translation                                     |
 | `enhancement`       | boolean | `false`  | Enable prompt enhancement                                      |
 | `enhancement_model` | string  | `sonnet` | Model used for enhancement                                     |
-| `audit`             | boolean | `true`   | Enable audit logging                                           |
+| `audit`             | boolean | `true`   | Enable audit trail                                             |
 | `verbose`           | boolean | `false`  | Show intermediate steps (correction, translation, enhancement) |
 
 ## Usage
@@ -119,8 +130,10 @@ Once enabled, the plugin intercepts every prompt automatically:
 ### Commands
 
 - `/better-prompt:config` — interactive configuration guide
-- `/better-prompt:logs` — display recent audit log entries
+- `/better-prompt:audit` — display recent audit trail entries
 - `/better-prompt:toggle` — quick toggle for specific stages
+
+Commands are handled natively by the `UserPromptExpansion` hook (instant execution, no LLM processing). Their instructions serve as a fallback.
 
 ### Debug mode
 
@@ -147,7 +160,7 @@ The plugin registers a `UserPromptSubmit` hook (type: `command`) that runs `hook
 3. **Correction** — invoke the `prompt-correction` agent via `claude -p --agent`; parse returned JSON for corrected text and mistake list
 4. **Translation** — invoke the `prompt-translation` agent (if enabled); non-English prompts are translated to English
 5. **Enhancement** — invoke the `prompt-enhancement` agent via `claude -p --agent`; injects the last 5 final prompts from a session context file as prior context for continuity
-6. **Audit** — append one NDJSON line to `.claude/prompts.json` in the project root
+6. **Audit** — append one NDJSON line to `.claude/better-prompt/audit.json` in the project root
 7. **Determine final prompt** — use the last enabled stage's output
 8. **Write sentinel** — store content hash to prevent re-processing the enhanced prompt on rewind
 9. **Block** — return `{"decision": "block", ...}` so the original prompt never reaches Claude
@@ -195,9 +208,9 @@ The block-clipboard-paste mechanism is a workaround for the absence of a native 
 - Check `/tmp/better-prompt-stop.log` for stop-hook output
 - Enable `verbose` to see pipeline details
 
-## Audit log format
+## Audit trail format
 
-The audit log is written to `<project-root>/.claude/prompts.json` in NDJSON format (one JSON object per line):
+The audit trail is written to `<project-root>/.claude/better-prompt/audit.json` in NDJSON format (one JSON object per line):
 
 ```json
 {

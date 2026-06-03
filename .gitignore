@@ -30,7 +30,7 @@ coverage/
 *.swp
 *.swo
 
-# Backup files
+# Backup
 *.bak
 *.backup
 *.bckp.*

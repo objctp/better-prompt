@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Display/clear better-prompt audit logs via UserPromptExpansion hook.
-# Intercepts /better-prompt:logs and executes directly,
+# Display/clear better-prompt audit trail via UserPromptExpansion hook.
+# Intercepts /better-prompt:audit and executes directly,
 # without LLM processing.
 #
-# Usage: logs.sh < stdin-payload
+# Usage: audit.sh < stdin-payload
 #
 set -euo pipefail
 
@@ -20,15 +20,15 @@ source "${PLUGIN_ROOT}/hooks/scripts/lib/common.sh"
 ### :::: Public Functions :::: #########
 ###
 
-# Resolve the audit log path from CLAUDE_PROJECT_DIR.
-logs::audit_path() {
+# Resolve the audit path from CLAUDE_PROJECT_DIR.
+audit::path() {
   local project_dir="${CLAUDE_PROJECT_DIR:-.}"
   printf '%s/.claude/better-prompt/audit.json' "$project_dir"
   return 0
 }
 
 # Format a single audit entry from a JSON line.
-logs::format_entry() {
+audit::format_entry() {
   local entry="$1"
   local index="$2"
 
@@ -81,7 +81,7 @@ logs::format_entry() {
 # Arguments:
 #   $1 - audit file path
 #   $2 - number of entries (from tail)
-logs::format_entries() {
+audit::format_entries() {
   local audit_file="$1"
   local count="$2"
 
@@ -103,7 +103,7 @@ logs::format_entries() {
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     ((++i))
-    logs::format_entry "$line" "$((start + i - 1))"
+    audit::format_entry "$line" "$((start + i - 1))"
   done <<<"$lines"
 
   return 0
@@ -129,7 +129,7 @@ main() {
   ARGS="${ARGS%%[[:space:]]}"
 
   local AUDIT_LOG
-  AUDIT_LOG=$(logs::audit_path)
+  AUDIT_LOG=$(audit::path)
 
   # Handle --clear
   if [[ "$ARGS" == "--clear" ]]; then
@@ -148,7 +148,7 @@ main() {
     if [[ "$ARGS" =~ ^[0-9]+$ ]]; then
       count="$ARGS"
     else
-      _format_block_response "Usage: /better-prompt:logs [count|--clear]
+      _format_block_response "Usage: /better-prompt:audit [count|--clear]
 
   count    Number of recent entries to show (default: 1)
   --clear  Delete the audit log"
@@ -173,7 +173,7 @@ Enable it with: /better-prompt:toggle audit on"
 
   # Format and display entries
   local output
-  output=$(logs::format_entries "$AUDIT_LOG" "$count") || true
+  output=$(audit::format_entries "$AUDIT_LOG" "$count") || true
 
   if [[ -z "$output" ]]; then
     _format_block_response "Audit log is empty."

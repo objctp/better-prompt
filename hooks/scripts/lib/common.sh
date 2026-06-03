@@ -43,9 +43,14 @@ _warn() {
 # shellcheck disable=SC2034
 _DEBUG_PREFIX="${_DEBUG_PREFIX:-[better-prompt]}"
 
+# Buffer for collecting debug messages during pipeline execution.
+# Rendered in the verbose block output by enhance::format_response.
+_DEBUG_LOG=""
+
 _debug() {
   if [[ "${VERBOSE:-false}" == "true" ]]; then
     printf '%s DEBUG: %s\n' "$_DEBUG_PREFIX" "$*" >&2
+    _DEBUG_LOG+="${_DEBUG_LOG:+\\n}  → $*"
   fi
   return 0
 }
@@ -81,15 +86,21 @@ _truncate_for_display() {
     return 0
   fi
 
-  # First non-empty line, trimmed to max_chars.
+  # First non-empty line (not yet truncated).
   local first_line
-  first_line=$(printf '%s' "$text" | awk 'NF{print;exit}' | cut -c1-"$max_chars")
+  first_line=$(printf '%s' "$text" | awk 'NF{print;exit}')
 
-  if [[ "$line_count" -le 1 ]]; then
-    printf '%s' "$first_line"
-  else
-    printf '%s [+%d lines]' "$first_line" "$((line_count - 1))"
+  local suffix=""
+  if [[ ${#first_line} -gt "$max_chars" ]]; then
+    first_line="${first_line:0:$((max_chars - 4))}"
+    suffix=" ..."
   fi
+
+  if [[ "$line_count" -gt 1 ]]; then
+    suffix+=" [+ $((line_count - 1)) lines]"
+  fi
+
+  printf '%s%s' "$first_line" "$suffix"
   return 0
 }
 

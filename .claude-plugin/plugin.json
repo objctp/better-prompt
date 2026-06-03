@@ -1,7 +1,7 @@
 {
   "name": "better-prompt",
-  "version": "0.6.1",
-  "description": "Automatically corrects and enhances user prompts before submission to Claude",
+  "version": "0.7.0",
+  "description": "Automatically corrects, translates and enhances user prompts before submission to Claude.",
   "author": {
     "name": "objct",
     "url": "https://objct.link"
