@@ -445,19 +445,32 @@ enhance::format_response() {
   local input_tokens="${10:-0}"
   local output_tokens="${11:-0}"
 
-  # Always include the final prompt so the user can verify what was sent,
-  # even when rewind fails (clipboard clobbered, permission denied, etc.).
+  # Always include the full enhanced prompt so the user can verify what was
+  # sent, even when rewind fails (clipboard clobbered, permission denied, etc.).
   local escaped_enhanced
   escaped_enhanced=$(_json_escape "$enhanced_prompt")
 
+  # Truncated previews for the reason field (UI display only).
+  local preview_original preview_enhanced
+  preview_original=$(_truncate_for_display "$original_prompt")
+  preview_enhanced=$(_truncate_for_display "$enhanced_prompt")
+
   if [[ "$verbose" == "true" ]]; then
-    local debug_msg="[Better Prompt Debug]\nOriginal:   $original_prompt"
-    [[ "$correction" == "true" ]] && debug_msg+="\nCorrected:  $corrected_prompt"
+    local debug_msg="[Better Prompt Debug]\nOriginal:   $preview_original"
+    if [[ "$correction" == "true" ]]; then
+      local preview_corrected
+      preview_corrected=$(_truncate_for_display "$corrected_prompt")
+      debug_msg+="\nCorrected:  $preview_corrected"
+    fi
     if [[ "$translation" == "true" ]]; then
       debug_msg+="\nLanguage:   ${DETECTED_LANGUAGE:-en}"
-      [[ "${DETECTED_LANGUAGE:-en}" != "en" ]] && debug_msg+="\nTranslated: $working_prompt"
+      if [[ "${DETECTED_LANGUAGE:-en}" != "en" ]]; then
+        local preview_working
+        preview_working=$(_truncate_for_display "$working_prompt")
+        debug_msg+="\nTranslated: $preview_working"
+      fi
     fi
-    [[ "$enhancement" == "true" ]] && debug_msg+="\nEnhanced:   $enhanced_prompt"
+    [[ "$enhancement" == "true" ]] && debug_msg+="\nEnhanced:   $preview_enhanced"
     if [[ -n "$cost_usd" ]] && [[ "$cost_usd" != "0" ]] && [[ "$cost_usd" != "0.000000" ]]; then
       debug_msg+="\nCost:       \$$(printf '%.6f' "$cost_usd")"
       debug_msg+="\nTokens:     ${input_tokens} in / ${output_tokens} out"
@@ -467,7 +480,7 @@ enhance::format_response() {
     escaped_debug=$(_json_escape "$debug_msg")
     printf '{"decision": "block", "reason": %s, "enhanced": %s, "suppressOutput": false}\n' "$escaped_debug" "$escaped_enhanced"
   else
-    local summary="Prompt enhanced by better-prompt.\nOriginal: ${original_prompt}\nEnhanced: ${enhanced_prompt}"
+    local summary="Prompt enhanced by better-prompt.\nOriginal: ${preview_original}\nEnhanced: ${preview_enhanced}"
     local escaped_summary
     escaped_summary=$(_json_escape "$(printf '%b' "$summary")")
     printf '{"decision": "block", "reason": %s, "enhanced": %s, "suppressOutput": false}\n' "$escaped_summary" "$escaped_enhanced"

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Block notification now shows truncated prompt previews (`[+N lines]`) instead of full text in the `reason` field
+
 ## [0.6.0] - 2026-06-03
 
 ### Changed

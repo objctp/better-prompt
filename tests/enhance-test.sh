@@ -2014,3 +2014,65 @@ function test_read_stdin_payload_empty_direct() {
   result=$(cat "$output_file")
   assert_empty "$result"
 }
+
+###
+### _truncate_for_display
+###
+
+function test_truncate_single_line_no_suffix() {
+  local result
+  result=$(_truncate_for_display "fix the auth bug")
+  assert_equals "fix the auth bug" "$result"
+}
+
+function test_truncate_multi_line_shows_count() {
+  local input="fix the auth bug
+line two
+line three"
+  local result
+  result=$(_truncate_for_display "$input")
+  assert_contains "fix the auth bug" "$result"
+  assert_contains "[+2 lines]" "$result"
+}
+
+function test_truncate_long_line_trimmed() {
+  local long_line
+  long_line=$(printf '%0.sx' {1..200})
+  local result
+  result=$(_truncate_for_display "$long_line")
+  local char_count
+  char_count=${#result}
+  # Single line: trimmed to 80 chars, no [+N lines] suffix.
+  assert_equals "80" "$char_count"
+}
+
+function test_truncate_multi_line_long_first_trimmed() {
+  local long_line
+  long_line=$(printf '%0.sx' {1..200})
+  local input="$long_line
+second line"
+  local result
+  result=$(_truncate_for_display "$input")
+  assert_contains "[+1 lines]" "$result"
+  # First line should be trimmed to 80 chars
+  local first_part="${result%% \[*}"
+  assert_equals "80" "${#first_part}"
+}
+
+function test_truncate_empty_input() {
+  local result
+  result=$(_truncate_for_display "")
+  assert_empty "$result"
+}
+
+function test_truncate_custom_max_chars() {
+  local result
+  result=$(_truncate_for_display "a very long prompt that should be cut" 10)
+  assert_equals "a very lon" "$result"
+}
+
+function test_truncate_only_newlines() {
+  local result
+  result=$(_truncate_for_display $'\n\n\n')
+  assert_empty "$result"
+}

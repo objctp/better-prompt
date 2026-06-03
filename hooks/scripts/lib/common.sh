@@ -62,6 +62,37 @@ _json_escape() {
   return 0
 }
 
+# Collapses multi-line text into a single-line summary for UI display.
+# Shows the first non-empty line trimmed to max_chars, followed by [+N lines]
+# when the text has additional lines.
+#
+# Arguments:
+#   $1 - text to truncate
+#   $2 - max preview characters (default 80)
+_truncate_for_display() {
+  local text="$1"
+  local max_chars="${2:-80}"
+
+  # Count non-empty lines.
+  local line_count
+  line_count=$(printf '%s' "$text" | grep -c .) || line_count=0
+
+  if [[ "$line_count" -eq 0 ]]; then
+    return 0
+  fi
+
+  # First non-empty line, trimmed to max_chars.
+  local first_line
+  first_line=$(printf '%s' "$text" | awk 'NF{print;exit}' | cut -c1-"$max_chars")
+
+  if [[ "$line_count" -le 1 ]]; then
+    printf '%s' "$first_line"
+  else
+    printf '%s [+%d lines]' "$first_line" "$((line_count - 1))"
+  fi
+  return 0
+}
+
 ###
 ### :::: File Utilities :::: #############
 ###

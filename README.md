@@ -90,16 +90,16 @@ verbose: false
 
 ### Settings
 
-| Setting             | Type    | Default  | Description                                         |
-| ------------------- | ------- | -------- | --------------------------------------------------- |
-| `enabled`           | boolean | `true`   | Global on/off switch                                |
-| `correction`        | boolean | `true`   | Enable grammar and spelling correction              |
-| `correction_model`  | string  | `haiku`  | Model used for correction                           |
-| `translation`       | boolean | `false`  | Enable translation of non-English prompts           |
-| `translation_model` | string  | `haiku`  | Model used for translation                          |
-| `enhancement`       | boolean | `false`  | Enable prompt enhancement                           |
-| `enhancement_model` | string  | `sonnet` | Model used for enhancement                          |
-| `audit`             | boolean | `true`   | Enable audit logging                                |
+| Setting             | Type    | Default  | Description                                                    |
+| ------------------- | ------- | -------- | -------------------------------------------------------------- |
+| `enabled`           | boolean | `true`   | Global on/off switch                                           |
+| `correction`        | boolean | `true`   | Enable grammar and spelling correction                         |
+| `correction_model`  | string  | `haiku`  | Model used for correction                                      |
+| `translation`       | boolean | `false`  | Enable translation of non-English prompts                      |
+| `translation_model` | string  | `haiku`  | Model used for translation                                     |
+| `enhancement`       | boolean | `false`  | Enable prompt enhancement                                      |
+| `enhancement_model` | string  | `sonnet` | Model used for enhancement                                     |
+| `audit`             | boolean | `true`   | Enable audit logging                                           |
 | `verbose`           | boolean | `false`  | Show intermediate steps (correction, translation, enhancement) |
 
 ## Usage
