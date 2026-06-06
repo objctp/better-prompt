@@ -128,6 +128,34 @@ main() {
   ARGS=$(_extract_command_args "$PAYLOAD")
   ARGS="${ARGS%%[[:space:]]}"
 
+  # --help / -h: display usage
+  if [[ "$ARGS" == "--help" || "$ARGS" == "-h" ]]; then
+    _format_block_response "Display recent audit trail entries from better-prompt.
+
+Usage: /better-prompt:audit [count]
+       /better-prompt:audit --clear
+       /better-prompt:audit --help
+
+Arguments:
+  count     Number of recent entries to display (default: 1)
+  --clear   Delete the audit trail file (.claude/better-prompt/audit.json)
+
+The audit trail is stored as NDJSON (one JSON object per line) in
+<project>/.claude/better-prompt/audit.json
+
+Each entry shows: date, original prompt, corrections, enhancements,
+mistake types, and models used.
+
+Examples:
+  /better-prompt:audit          Show last entry
+  /better-prompt:audit 5        Show last 5 entries
+  /better-prompt:audit --clear  Delete audit trail
+
+Tips:
+  Use /better-prompt:toggle audit on to enable audit trail logging."
+    exit 0
+  fi
+
   local AUDIT_LOG
   AUDIT_LOG=$(audit::path)
 
@@ -150,8 +178,8 @@ main() {
     else
       _format_block_response "Usage: /better-prompt:audit [count|--clear]
 
-  count    Number of recent entries to show (default: 1)
-  --clear  Delete the audit log"
+  count    Number of recent entries to display (default: 1)
+  --clear  Delete the audit trail file (.claude/better-prompt/audit.json)"
       exit 0
     fi
   fi

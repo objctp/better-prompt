@@ -101,3 +101,9 @@ Show summary statistics if available:
 - Punctuation corrections are NOT classified as mistakes (by design)
 - Original prompts are recorded BEFORE any correction or enhancement
 - This command is handled natively by the `UserPromptExpansion` hook (instant execution, no LLM processing). The instructions above serve as a fallback.
+
+## Flags
+
+| Flag     | Description                 |
+| -------- | --------------------------- |
+| `--help` | Show usage and help message |

@@ -1,6 +1,6 @@
 {
   "name": "better-prompt",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Automatically corrects, translates and enhances user prompts before submission to Claude.",
   "author": {
     "name": "objct",
@@ -20,7 +20,7 @@
   ],
   "commands": [
     "./commands/config.md",
-    "./commands/logs.md",
+    "./commands/audit.md",
     "./commands/toggle.md"
   ],
   "agents": [

@@ -133,7 +133,7 @@ Once enabled, the plugin intercepts every prompt automatically:
 - `/better-prompt:audit` — display recent audit trail entries
 - `/better-prompt:toggle` — quick toggle for specific stages
 
-Commands are handled natively by the `UserPromptExpansion` hook (instant execution, no LLM processing). Their instructions serve as a fallback.
+Use `/better-prompt:<command> --help` to display usage details. Commands are handled natively by the `UserPromptExpansion` hook (instant execution, no LLM processing). Their instructions serve as a fallback.
 
 ### Debug mode
 

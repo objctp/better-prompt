@@ -119,6 +119,71 @@ main() {
   read -r SETTING VALUE <<<"$ARGS"
   SETTING="${SETTING%%[[:space:]]}"
 
+  # --help / -h: display usage
+  if [[ "$SETTING" == "--help" || "$SETTING" == "-h" ]]; then
+    _format_block_response "Set better-prompt plugin configuration.
+
+Usage: /better-prompt:config <setting> <value>
+       /better-prompt:config --show
+       /better-prompt:config --help
+
+Flags:
+  --show   Display current settings and their values
+  --help   Show this help message
+
+Settings:
+  enabled             boolean   Global on/off switch
+  correction          boolean   Grammar and spelling correction
+  correction_model    model     Model for correction (default: haiku)
+  translation         boolean   Translate non-English prompts
+  translation_model   model     Model for translation (default: haiku)
+  enhancement         boolean   Prompt enhancement
+  enhancement_model   model     Model for enhancement (default: sonnet)
+  audit               boolean   Audit trail logging
+  verbose             boolean   Show intermediate pipeline steps
+
+Boolean values: true/false, on/off, yes/no
+Model values: any valid model name or ID (e.g. haiku, sonnet, opus)
+
+Examples:
+  /better-prompt:config verbose true
+  /better-prompt:config enhancement_model sonnet
+  /better-prompt:config --show
+  /better-prompt:config            (interactive mode)"
+    exit 0
+  fi
+
+  # --show: display current config
+  if [[ "$SETTING" == "--show" ]]; then
+    if [[ ! -f "$CONFIG" ]]; then
+      _format_block_response "Config file not found: $CONFIG
+Try running any prompt first to initialise default settings."
+      exit 0
+    fi
+
+    declare -A _CFG=()
+    _parse_config _CFG
+
+    local -a _keys=(enabled correction correction_model translation translation_model enhancement enhancement_model audit verbose)
+    local -a _defs=(true true haiku false haiku false sonnet true false)
+    local -a _types=(boolean boolean model boolean model boolean model boolean boolean)
+
+    local _output
+    printf -v _output '%-22s %-8s %-10s %s\n%-22s %-8s %-10s %s' \
+      "SETTING" "TYPE" "DEFAULT" "CURRENT" \
+      "-------" "----" "-------" "-------"
+
+    local i _val
+    for i in "${!_keys[@]}"; do
+      _val=$(_get_setting "${_keys[$i]}" "${_defs[$i]}")
+      _output+=$'\n'
+      _output+="$(printf '%-22s %-8s %-10s %s' "${_keys[$i]}" "${_types[$i]}" "${_defs[$i]}" "$_val")"
+    done
+
+    _format_block_response "$_output"
+    exit 0
+  fi
+
   # Missing value
   if [[ -z "$VALUE" ]]; then
     _format_block_response "Usage: /better-prompt:config <setting> <value>
@@ -128,7 +193,7 @@ Settings: enabled, correction, correction_model, translation, translation_model,
 Boolean values: true/false, on/off, yes/no
 Model values: any valid model name or ID (e.g. haiku, sonnet, opus)
 
-Use /better-prompt:config (no args) for interactive mode."
+Use /better-prompt:config --help for full usage."
     exit 0
   fi
 

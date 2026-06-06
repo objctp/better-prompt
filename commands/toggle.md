@@ -69,3 +69,9 @@ Always display the result:
 - Changes take effect immediately (no restart required)
 - When `enabled` is OFF, all other stages are inactive regardless of their settings
 - Use the config command for more detailed configuration
+
+## Flags
+
+| Flag     | Description                 |
+| -------- | --------------------------- |
+| `--help` | Show usage and help message |

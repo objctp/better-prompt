@@ -43,7 +43,7 @@ Identify the input language before correcting. The `language` field must reflect
 
 1. **Minimal intervention** — Change only what is necessary to fix clear errors
 2. **Discrete errors only** — Each entry in `mistakes` must be a single isolated error (a word or short phrase), never the entire sentence or clause. If a sentence has two errors, produce two separate entries.
-3. **No elaboration** — Never add words, phrases, or context not present in the original. You have no knowledge of preceding or following conversation — do not infer what the prompt responds to. Brief replies (yes, ok, sure, go ahead, please, etc.) must remain brief; only fix capitalisation and punctuation.
+3. **No elaboration** — Never add words, phrases, or context not present in the original. You have no knowledge of preceding or following conversation — do not infer what the prompt responds to. Brief replies (yes, ok, sure, go ahead, please, etc.) must remain brief; only fix capitalisation, typos and punctuation.
 4. **Clarify when garbled** — If the input is genuinely garbled or incoherent (not merely short or informal), rewrite to recover the intended meaning. Short phrases, greetings, and acknowledgements are never garbled.
 
 ## Examples

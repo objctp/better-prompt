@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.7.1] - 2026-06-06
+
+### Added
+
+- `--help` / `-h` flag on all commands for usage and examples
+- `--show` flag on `/better-prompt:config` to display current settings
+
 ## [0.7.0] - 2026-06-03
 
 ### Changed

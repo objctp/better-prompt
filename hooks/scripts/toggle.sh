@@ -101,11 +101,38 @@ main() {
   read -r STAGE VALUE_ARG <<<"$ARGS"
   STAGE="${STAGE%%[[:space:]]}"
 
+  # --help / -h: display usage
+  if [[ "$STAGE" == "--help" || "$STAGE" == "-h" ]]; then
+    _format_block_response "Quick toggle for better-prompt plugin stages.
+
+Usage: /better-prompt:toggle <stage> [on|off]
+       /better-prompt:toggle --help
+
+If [on|off] is omitted, the stage is flipped to the opposite of its current state.
+
+Stages:
+  enabled      Global on/off switch (disables all stages when off)
+  correction   Grammar and spelling correction
+  translation  Translate non-English prompts to English
+  enhancement  Prompt enhancement for clarity and specificity
+  audit        Audit trail logging of original prompts
+  verbose      Show intermediate pipeline steps
+
+Examples:
+  /better-prompt:toggle correction off   Disable correction
+  /better-prompt:toggle translation on   Enable translation
+  /better-prompt:toggle audit            Flip audit on/off
+  /better-prompt:toggle enabled          Toggle entire plugin"
+    exit 0
+  fi
+
   # No stage provided -- show usage
   if [[ -z "$STAGE" ]]; then
     _format_block_response "Usage: /better-prompt:toggle <stage> [on|off]
 
-Available stages: enabled, correction, translation, enhancement, audit, verbose"
+Available stages: enabled, correction, translation, enhancement, audit, verbose
+
+Use /better-prompt:toggle --help for full usage."
     exit 0
   fi
 

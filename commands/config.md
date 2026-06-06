@@ -88,3 +88,10 @@ Suggest quick actions to the user:
 - Changes take effect immediately (no restart required)
 - The settings file can be edited manually with any text editor
 - Use the toggle command for quick on/off of specific stages
+
+## Flags
+
+| Flag      | Description                 |
+| --------- | --------------------------- |
+| `--show`  | Display current settings    |
+| `--help`  | Show usage and help message |
