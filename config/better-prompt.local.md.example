@@ -1,6 +1,6 @@
 ---
 # Better Prompt Plugin Settings
-# Copy this file to ~/.claude/better-prompt.local.md and customise as needed
+# Copy this file to ~/.config/opencode/better-prompt.local.md and customise as needed
 
 # Global on/off switch for the entire plugin
 enabled: true
@@ -50,9 +50,26 @@ Disabling a stage passes its input through unchanged.
 
 ## Model Options
 
+Claude Code built-in aliases (work in both Claude Code and OpenCode):
+
 - `haiku`: Fast, efficient (recommended for correction and translation)
 - `sonnet`: Balanced capability and speed (recommended for enhancement)
 - `opus`: Highest quality (slower, more expensive)
+
+OpenCode dynamic aliases (resolved from your connected providers at runtime):
+
+- `fast`: Cheapest model with tool support
+- `capable`: Mid-range cost model
+- `powerful`: Highest-context model
+
+You can also specify an explicit `provider/model` ID (OpenCode only):
+
+```yaml
+correction_model: opencode-go/deepseek-v4-flash
+enhancement_model: opencode-go/deepseek-v4-pro
+```
+
+When the value matches the default, the agent inherits the session's current model (no override is sent).
 
 ## Notes
 

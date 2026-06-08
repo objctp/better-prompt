@@ -1,11 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 // ── Types ──────────────────────────────────────────────────
@@ -41,25 +36,263 @@ const CONFIG_DEFAULTS: Config = {
   verbose: false,
 };
 
-const AGENT_NAMES = new Set([
-  "prompt-correction",
-  "prompt-translation",
-  "prompt-enhancement",
-]);
+const AGENT_NAMES = new Set(["prompt-correction", "prompt-translation", "prompt-enhancement"]);
 
 const CONTEXT_WINDOW = 5;
 
 // ── Model resolution ──────────────────────────────────────
 // Agents inherit the session's current model by default.
-// MODEL_MAP resolves short names from config overrides to provider/model IDs.
-// Users set their preferred models in better-prompt.local.md — the plugin
-// only passes an explicit model when a non-default value is configured.
+// When a user sets a model in better-prompt.local.md, resolveModel()
+// maps it to a { providerID, modelID } pair that opencode can use.
+//
+// Resolution order:
+//   1. provider/model format (e.g. "opencode-go/deepseek-v4-flash") → used directly
+//   2. Short-name aliases ("fast", "capable", "powerful") → resolved
+//      dynamically from the user's connected providers via auth.json,
+//      environment variables, config, and the models.dev catalogue
+//   3. Legacy names ("haiku", "sonnet", "opus") → mapped to short-name
+//      aliases for backward compatibility
+//
+// The catalogue is fetched once from models.dev and cached locally for
+// 24 hours. Provider discovery mirrors opencode's own logic:
+// auth.json keys + env vars from catalogue + custom provider config,
+// minus disabled_providers, intersected with enabled_providers.
 
-const MODEL_MAP: Record<string, { providerID: string; modelID: string }> = {
-  haiku: { providerID: "anthropic", modelID: "claude-haiku-4-20250514" },
-  sonnet: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
-  opus: { providerID: "anthropic", modelID: "claude-opus-4-20250514" },
-};
+type ModelRef = { providerID: string; modelID: string };
+
+interface CatalogModel {
+  id: string;
+  name?: string;
+  tool_call?: boolean;
+  limit?: { context?: number; output?: number };
+  cost?: { input?: number; output?: number };
+}
+
+interface CatalogProvider {
+  id: string;
+  name?: string;
+  env?: string[];
+  models?: Record<string, CatalogModel>;
+}
+
+type Catalog = Record<string, CatalogProvider>;
+
+const CATALOG_CACHE_PATH = join(homedir(), ".cache", "opencode", "models-dev.json");
+
+const CATALOG_STALE_MS = 24 * 60 * 60 * 1000;
+
+let _catalog: Catalog | null = null;
+
+async function loadCatalog(): Promise<Catalog> {
+  if (_catalog) return _catalog;
+
+  const fs = await import("node:fs");
+  const famt = fs.promises;
+
+  const isStale = (mtime: number): boolean => Date.now() - mtime > CATALOG_STALE_MS;
+
+  try {
+    const stat = await famt.stat(CATALOG_CACHE_PATH);
+    if (!isStale(stat.mtimeMs)) {
+      const raw = await famt.readFile(CATALOG_CACHE_PATH, "utf-8");
+      _catalog = JSON.parse(raw) as Catalog;
+      return _catalog;
+    }
+  } catch {}
+
+  try {
+    const res = await fetch("https://models.dev/api.json");
+    const data: Catalog = await res.json();
+    _catalog = data;
+    await famt.mkdir(join(CATALOG_CACHE_PATH, ".."), { recursive: true });
+    await famt.writeFile(CATALOG_CACHE_PATH, JSON.stringify(data));
+    return data;
+  } catch {
+    try {
+      const raw = await famt.readFile(CATALOG_CACHE_PATH, "utf-8");
+      _catalog = JSON.parse(raw) as Catalog;
+      return _catalog;
+    } catch {
+      return {};
+    }
+  }
+}
+
+interface OpenCodeConfig {
+  disabled_providers?: string[];
+  enabled_providers?: string[];
+  provider?: Record<string, { models?: Record<string, unknown> }>;
+  [key: string]: unknown;
+}
+
+function deepMerge<T extends Record<string, unknown>>(a: T, b: Partial<T>): T {
+  const result = { ...a };
+  for (const key of Object.keys(b) as (keyof T)[]) {
+    const bVal = b[key];
+    const aVal = a[key];
+    if (
+      bVal &&
+      typeof bVal === "object" &&
+      !Array.isArray(bVal) &&
+      aVal &&
+      typeof aVal === "object" &&
+      !Array.isArray(aVal)
+    ) {
+      (result as Record<string, unknown>)[key as string] = deepMerge(
+        aVal as Record<string, unknown>,
+        bVal as Record<string, unknown>,
+      );
+    } else {
+      (result as Record<string, unknown>)[key as string] = bVal;
+    }
+  }
+  return result;
+}
+
+async function getConnectedProviders(): Promise<Set<string>> {
+  const catalog = await loadCatalog();
+  const connected = new Set<string>();
+
+  // 1. Auth.json credentials
+  try {
+    const authPath = join(homedir(), ".local", "share", "opencode", "auth.json");
+    const raw = readFileSync(authPath, "utf-8");
+    const auth = JSON.parse(raw);
+    for (const key of Object.keys(auth)) connected.add(key);
+  } catch {}
+
+  // 2. Environment variables listed in catalogue
+  for (const [pid, pdata] of Object.entries(catalog)) {
+    for (const envVar of pdata.env ?? []) {
+      if (process.env[envVar]) connected.add(pid);
+    }
+  }
+
+  // 3. Custom providers from opencode config
+  const cfg = loadMergedConfig();
+  for (const p of Object.keys(cfg.provider ?? {})) connected.add(p);
+
+  // 4. Apply disabled_providers
+  for (const d of cfg.disabled_providers ?? []) connected.delete(d);
+
+  // 5. Apply enabled_providers whitelist
+  if (cfg.enabled_providers) {
+    const wl = new Set(cfg.enabled_providers);
+    for (const p of connected) {
+      if (!wl.has(p)) connected.delete(p);
+    }
+  }
+
+  return connected;
+}
+
+function loadMergedConfig(): OpenCodeConfig {
+  const load = (p: string): OpenCodeConfig => {
+    try {
+      return JSON.parse(readFileSync(p, "utf-8"));
+    } catch {
+      return {};
+    }
+  };
+  const globalCfg = load(join(homedir(), ".config", "opencode", "opencode.json"));
+  const projCfg = load("opencode.json");
+  return deepMerge(globalCfg, projCfg);
+}
+
+interface ModelCandidate {
+  id: string;
+  context: number;
+  cost: number;
+  toolCall: boolean;
+}
+
+function partitionByRole(models: ModelCandidate[]): {
+  fast: ModelCandidate | null;
+  capable: ModelCandidate | null;
+  powerful: ModelCandidate | null;
+} {
+  const withTools = models.filter((m) => m.toolCall);
+  const pool = withTools.length > 0 ? withTools : models;
+  const byCost = [...pool].sort((a, b) => a.cost - b.cost);
+  const byCtx = [...pool].sort((a, b) => b.context - a.context);
+
+  const fast = byCost[0] || null;
+  const powerful = byCtx[0] || null;
+  const capable = byCost.length > 2 ? byCost[Math.floor(byCost.length / 2)] : byCost[1] || fast;
+  return { fast, capable, powerful };
+}
+
+async function resolveShortName(shortName: string): Promise<ModelRef | undefined> {
+  const connected = await getConnectedProviders();
+  const catalog = await loadCatalog();
+  const cfg = loadMergedConfig();
+
+  const allModels: ModelCandidate[] = [];
+
+  for (const pid of connected) {
+    const catModels = catalog[pid]?.models ?? {};
+    const customModels =
+      (cfg.provider as Record<string, Record<string, unknown>>)?.[pid]?.models ?? {};
+    const merged = { ...catModels, ...customModels };
+
+    for (const [mid, m] of Object.entries(merged)) {
+      const model = m as CatalogModel;
+      allModels.push({
+        id: `${pid}/${mid}`,
+        context: model?.limit?.context ?? 0,
+        cost: (model?.cost?.input ?? 0) + (model?.cost?.output ?? 0),
+        toolCall: model?.tool_call ?? false,
+      });
+    }
+  }
+
+  const { fast, capable, powerful } = partitionByRole(allModels);
+
+  const ALIASES: Record<string, ModelRef | null> = {
+    fast: fast ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] } : null,
+    capable: capable
+      ? {
+          providerID: capable.id.split("/")[0],
+          modelID: capable.id.split("/")[1],
+        }
+      : null,
+    powerful: powerful
+      ? {
+          providerID: powerful.id.split("/")[0],
+          modelID: powerful.id.split("/")[1],
+        }
+      : null,
+    haiku: fast ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] } : null,
+    sonnet: capable
+      ? {
+          providerID: capable.id.split("/")[0],
+          modelID: capable.id.split("/")[1],
+        }
+      : null,
+    opus: powerful
+      ? {
+          providerID: powerful.id.split("/")[0],
+          modelID: powerful.id.split("/")[1],
+        }
+      : null,
+  };
+
+  return ALIASES[shortName] ?? undefined;
+}
+
+function resolveModel(shortName: string, defaultName: string): Promise<ModelRef | undefined> {
+  if (shortName === defaultName) return Promise.resolve(undefined);
+
+  const slashIdx = shortName.indexOf("/");
+  if (slashIdx > 0) {
+    return Promise.resolve({
+      providerID: shortName.slice(0, slashIdx),
+      modelID: shortName.slice(slashIdx + 1),
+    });
+  }
+
+  return resolveShortName(shortName);
+}
 
 // ── Config parsing ─────────────────────────────────────────
 
@@ -170,15 +403,8 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     try {
       mkdirSync(AUDIT_DIR, { recursive: true });
       const ts = new Date().toISOString();
-      const errStr = error instanceof Error
-        ? error.message
-        : error
-          ? String(error)
-          : "";
-      appendFileSync(
-        DEBUG_PATH,
-        `[${ts}] ${message}${errStr ? " — " + errStr : ""}\n`,
-      );
+      const errStr = error instanceof Error ? error.message : error ? String(error) : "";
+      appendFileSync(DEBUG_PATH, `[${ts}] ${message}${errStr ? " — " + errStr : ""}\n`);
     } catch {
       // best effort
     }
@@ -214,35 +440,12 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
 
       if (!result?.parts) return text;
 
-      const textPart = result.parts.find(
-        (p: any) => p.type === "text" && p.text,
-      );
+      const textPart = result.parts.find((p: any) => p.type === "text" && p.text);
       return textPart && "text" in textPart ? (textPart as any).text : text;
     } catch (err) {
       debugLog(`invokeAgent(${agent}) failed`, err);
       return text;
     }
-  }
-
-  function resolveModel(
-    shortName: string,
-    defaultName: string,
-  ): { providerID: string; modelID: string } | undefined {
-    // Only resolve when user explicitly changed the model from default.
-    // When unchanged, return undefined → agent inherits session model.
-    if (shortName === defaultName) return undefined;
-    // Try MODEL_MAP first (short names like haiku/sonnet/opus)
-    const mapped = MODEL_MAP[shortName];
-    if (mapped) return mapped;
-    // Otherwise treat as providerID/modelID format (e.g. "zai-coding-plan/glm-4.5-air")
-    const slashIdx = shortName.indexOf("/");
-    if (slashIdx > 0) {
-      return {
-        providerID: shortName.slice(0, slashIdx),
-        modelID: shortName.slice(slashIdx + 1),
-      };
-    }
-    return undefined;
   }
 
   // ── Pipeline ───────────────────────────────────────────
@@ -255,11 +458,21 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     let working = text;
     let corrected: string | null = null;
     let detectedLanguage: string | null = null;
-    let mistakes: Array<{ type: string; original: string; correction: string }> = [];
+    let mistakes: Array<{
+      type: string;
+      original: string;
+      correction: string;
+    }> = [];
 
     const { correction, translation, enhancement } = config;
     const anyStage = correction || translation || enhancement;
-    if (!anyStage) return { result: text, corrected: null, detectedLanguage: null, mistakes: [] };
+    if (!anyStage)
+      return {
+        result: text,
+        corrected: null,
+        detectedLanguage: null,
+        mistakes: [],
+      };
 
     // When enhancement is enabled without translation, correction is redundant —
     // enhancement subsumes grammar/spelling fixes.
@@ -270,7 +483,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
 
     // ── Correction ──
     if (!skipCorrection && (correction || correctionOnlyForLanguage)) {
-      const model = resolveModel(config.correction_model, CONFIG_DEFAULTS.correction_model);
+      const model = await resolveModel(config.correction_model, CONFIG_DEFAULTS.correction_model);
       const raw = await invokeAgent("prompt-correction", working, sessionID, model);
 
       try {
@@ -303,7 +516,10 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       if (detectedLanguage === "en") {
         // Already English — skip translation
       } else {
-        const model = resolveModel(config.translation_model, CONFIG_DEFAULTS.translation_model);
+        const model = await resolveModel(
+          config.translation_model,
+          CONFIG_DEFAULTS.translation_model,
+        );
         const translated = await invokeAgent("prompt-translation", working, sessionID, model);
         if (translated && translated.trim()) working = translated;
       }
@@ -322,7 +538,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       }
       enhanceInput += working;
 
-      const model = resolveModel(config.enhancement_model, CONFIG_DEFAULTS.enhancement_model);
+      const model = await resolveModel(config.enhancement_model, CONFIG_DEFAULTS.enhancement_model);
       const enhanced = await invokeAgent("prompt-enhancement", enhanceInput, sessionID, model);
       if (enhanced && enhanced.trim()) working = enhanced;
     }
@@ -336,8 +552,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     // Clean up in-memory context when session ends
     event: async ({ event }: { event: any }) => {
       if (event.type === "session.deleted") {
-        const sid =
-          event.properties?.sessionID ?? event.properties?.info?.id;
+        const sid = event.properties?.sessionID ?? event.properties?.info?.id;
         if (sid) priorContexts.delete(sid);
       }
     },
@@ -348,9 +563,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       if (input.agent && AGENT_NAMES.has(input.agent)) return;
 
       // Extract text from parts
-      const textPart = output.parts?.find(
-        (p: any) => p.type === "text" && p.text,
-      );
+      const textPart = output.parts?.find((p: any) => p.type === "text" && p.text);
       if (!textPart || !("text" in textPart)) return;
 
       const originalText = textPart.text;
@@ -360,8 +573,11 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       if (!config.enabled) return;
 
       // Run pipeline
-      const { result, corrected, detectedLanguage, mistakes } =
-        await runPipeline(originalText, input.sessionID, config);
+      const { result, corrected, detectedLanguage, mistakes } = await runPipeline(
+        originalText,
+        input.sessionID,
+        config,
+      );
 
       // Replace text
       textPart.text = result;
@@ -396,13 +612,10 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       // without messageID, causes SchemaError in OpenCode >=1.16)
       if (config.verbose) {
         const changed = result !== originalText;
-        const lines: string[] = [
-          `[better-prompt] ${changed ? "prompt modified" : "no changes"}`,
-        ];
+        const lines: string[] = [`[better-prompt] ${changed ? "prompt modified" : "no changes"}`];
 
         if (changed) {
-          const trunc = (s: string, n = 120) =>
-            s.length > n ? s.slice(0, n) + "..." : s;
+          const trunc = (s: string, n = 120) => (s.length > n ? s.slice(0, n) + "..." : s);
           lines.push(`Original:  "${trunc(originalText)}"`);
           lines.push(`Processed: "${trunc(result)}"`);
         }
@@ -414,9 +627,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         if (mistakes.length > 0) {
           lines.push(`Mistakes (${mistakes.length}):`);
           for (const m of mistakes) {
-            lines.push(
-              `  - ${m.type}: "${m.original}" → "${m.correction}"`,
-            );
+            lines.push(`  - ${m.type}: "${m.original}" → "${m.correction}"`);
           }
         }
 
@@ -430,7 +641,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         debugLog(lines.join("\n"));
       }
     },
-
   };
 };
 

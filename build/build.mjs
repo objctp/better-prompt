@@ -28,7 +28,7 @@ mkdirSync(DIST, { recursive: true });
 // Model IDs are intentionally omitted from agent frontmatter.
 // OpenCode subagents inherit the session's current model by default.
 // Users can override per-stage models via better-prompt.local.md config,
-// resolved at runtime by the plugin's MODEL_MAP.
+// resolved at runtime by the plugin's dynamic model discovery.
 const TEMP_MAP = {
   haiku: 0.1,
   sonnet: 0.3,
@@ -69,9 +69,7 @@ function generateAgent(srcPath) {
   const lines = [
     "---",
     `description: |`,
-    ...description.split(". ").length
-      ? [`  ${description}`]
-      : [`  ${description}`],
+    ...(description.split(". ").length ? [`  ${description}`] : [`  ${description}`]),
     "mode: subagent",
     `temperature: ${TEMP_MAP[modelShort] ?? 0.1}`,
     `steps: ${maxTurns || 1}`,
@@ -139,10 +137,7 @@ const pluginsDir = join(ROOT, ".opencode", "plugins");
 if (existsSync(pluginsDir) && readdirSync(pluginsDir).length > 0) {
   mkdirSync(join(DIST, "plugins"), { recursive: true });
   for (const entry of readdirSync(pluginsDir)) {
-    copyDereferenced(
-      join(pluginsDir, entry),
-      join(DIST, "plugins", entry),
-    );
+    copyDereferenced(join(pluginsDir, entry), join(DIST, "plugins", entry));
   }
 }
 
@@ -159,10 +154,7 @@ if (existsSync(OC_COMMANDS)) rmSync(OC_COMMANDS, { recursive: true });
 // Config (example config copied to ~/.config/opencode/ at runtime)
 mkdirSync(join(DIST, "config"), { recursive: true });
 for (const entry of readdirSync(join(ROOT, "config"))) {
-  copyDereferenced(
-    join(ROOT, "config", entry),
-    join(DIST, "config", entry),
-  );
+  copyDereferenced(join(ROOT, "config", entry), join(DIST, "config", entry));
 }
 
 // Copy config and docs
@@ -189,18 +181,8 @@ const distPkg = {
     "./server": { import: "./plugins/better-prompt.js" },
     "./tui": { import: "./plugins/better-prompt-tui.tsx" },
   },
-  files: [
-    "agents/",
-    "plugins/",
-    "config/",
-    "opencode.json",
-    "README.md",
-    "LICENSE",
-  ],
+  files: ["agents/", "plugins/", "config/", "opencode.json", "README.md", "LICENSE"],
 };
-writeFileSync(
-  join(DIST, "package.json"),
-  JSON.stringify(distPkg, null, 2) + "\n",
-);
+writeFileSync(join(DIST, "package.json"), JSON.stringify(distPkg, null, 2) + "\n");
 
 console.log("Build complete. Output in dist/");
