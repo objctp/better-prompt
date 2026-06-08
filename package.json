@@ -1,0 +1,29 @@
+{
+  "name": "@objctp/opencode-better-prompt",
+  "version": "0.7.1",
+  "description": "Automatically corrects, translates and enhances user prompts before submission to Claude.",
+  "author": {
+    "name": "objct",
+    "url": "https://objct.link"
+  },
+  "homepage": "https://github.com/objctp/better-prompt",
+  "repository": "https://github.com/objctp/better-prompt",
+  "license": "MIT",
+  "keywords": [
+    "opencode-plugin",
+    "claude-code-plugin",
+    "prompt",
+    "correction",
+    "spellcheck",
+    "enhancement",
+    "grammar",
+    "translation"
+  ],
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "node build/build.mjs",
+    "prepublishOnly": "npm run build"
+  }
+}

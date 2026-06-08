@@ -2,6 +2,7 @@
 .claude/*
 !.claude/CLAUDE.md
 cspell.json
+.opencode/better-prompt
 
 # Folders
 docs/
