@@ -63,7 +63,7 @@ function generateAgent(srcPath) {
   }
 
   // Map Claude Code color names to valid OpenCode hex values
-  const COLOR_MAP = { cyan: "#06B6D4", green: "#22C55E", blue: "#3B82F6" };
+  const COLOR_MAP = { cyan: "#06B6D4", green: "#22C55E", blue: "#3B82F6", purple: "#A78BFA" };
 
   // Build OpenCode frontmatter (no model — inherits session model)
   const lines = [

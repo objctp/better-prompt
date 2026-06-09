@@ -22,9 +22,16 @@ interface PipelineResult {
   corrected: string | null;
   detectedLanguage: string | null;
   mistakes: Array<{ type: string; original: string; correction: string }>;
+  contextSummary: string;
 }
 
 type StageNotifier = (stage: string, status: "starting" | "complete" | "skipped") => void;
+
+interface SessionContext {
+  summary: string;
+  lastMessageID: string;
+  messageCount: number;
+}
 
 const CONFIG_DEFAULTS: Config = {
   enabled: true,
@@ -38,7 +45,14 @@ const CONFIG_DEFAULTS: Config = {
   verbose: false,
 };
 
-const CONTEXT_WINDOW = 5;
+const SUB_AGENTS = new Set([
+  "prompt-correction",
+  "prompt-translation",
+  "prompt-enhancement",
+  "prompt-summarisation",
+]);
+
+const FULL_REFRESH_THRESHOLD = 10;
 
 // ── Model resolution ──────────────────────────────────────
 // Agents inherit the session's current model by default.
@@ -374,6 +388,7 @@ interface AuditEntry {
     correction: string | null;
     translation: string | null;
     enhancement: string | null;
+    context: string | null;
   };
 }
 
@@ -457,8 +472,8 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     }
   }
 
-  // In-memory prior context: sessionID → sliding window of enhanced prompts
-  const priorContexts = new Map<string, string[]>();
+  // In-memory session context: sessionID → summarised conversation context
+  const sessionContexts = new Map<string, SessionContext>();
 
   // ── Agent invocation ───────────────────────────────────
 
@@ -500,6 +515,123 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     }
   }
 
+  // ── Context summarisation ──────────────────────────────────
+
+  function formatFullSummaryInput(userMessages: string[], lastAssistant: string): string {
+    let input =
+      "Summarise this conversation in 2-3 sentences. Focus on the topic, technical context, user's goal, and key decisions. Be concise.\n\n";
+    for (const msg of userMessages) {
+      input += `User: ${msg}\n`;
+    }
+    if (lastAssistant) {
+      input += `\nAssistant: ${lastAssistant}\n`;
+    }
+    input += "\nSummary:";
+    return input;
+  }
+
+  function formatIncrementalInput(
+    existingSummary: string,
+    userMsg: string,
+    assistantMsg: string,
+  ): string {
+    let input = `Given this summary:\n${existingSummary}\n\nUpdate it with this new exchange:\nUser: ${userMsg}`;
+    if (assistantMsg) {
+      input += `\nAssistant: ${assistantMsg}`;
+    }
+    input +=
+      "\n\nProvide an updated summary in 2-3 sentences. Drop stale details if no longer relevant.\n\nUpdated summary:";
+    return input;
+  }
+
+  function extractTextFromParts(parts: any[]): string {
+    if (!parts || !Array.isArray(parts)) return "";
+    const texts: string[] = [];
+    for (const p of parts) {
+      if (p?.type === "text" && typeof p.text === "string" && p.text.trim()) {
+        texts.push(p.text.trim());
+      }
+    }
+    return texts.join("\n");
+  }
+
+  async function summariseContext(
+    sessionID: string,
+    currentPrompt: string,
+    config: Config,
+  ): Promise<{ summary: string; lastMessageID: string; messageCount: number }> {
+    const existing = sessionContexts.get(sessionID);
+
+    let messages: any[];
+    try {
+      const result = await client.session.messages({ path: { id: sessionID } });
+      messages = Array.isArray(result) ? result : [];
+    } catch (err) {
+      debugLog("summariseContext: session.messages failed", err);
+      return {
+        summary: existing?.summary ?? "",
+        lastMessageID: existing?.lastMessageID ?? "",
+        messageCount: existing?.messageCount ?? 0,
+      };
+    }
+
+    const userMessages: string[] = [];
+    let lastAssistantText = "";
+    let latestMessageID = existing?.lastMessageID ?? "";
+
+    for (const msg of messages) {
+      const info = msg?.info;
+      if (!info?.id) continue;
+
+      const isSubAgent = info.agent && SUB_AGENTS.has(info.agent);
+      if (isSubAgent) continue;
+
+      const text = extractTextFromParts(msg?.parts);
+      if (!text) continue;
+
+      if (info.role === "user") {
+        userMessages.push(text.substring(0, 500));
+      } else if (info.role === "assistant") {
+        lastAssistantText = text.substring(0, 1000);
+      }
+
+      latestMessageID = info.id;
+    }
+
+    if (userMessages.length === 0) {
+      return {
+        summary: existing?.summary ?? "",
+        lastMessageID: (latestMessageID || existing?.lastMessageID) ?? "",
+        messageCount: existing?.messageCount ?? 0,
+      };
+    }
+
+    const needFullRefresh =
+      !existing || existing.messageCount >= FULL_REFRESH_THRESHOLD || existing.lastMessageID === "";
+
+    const model = await resolveModel(config.correction_model, CONFIG_DEFAULTS.correction_model);
+    let summary: string;
+
+    if (needFullRefresh) {
+      const input = formatFullSummaryInput(userMessages, lastAssistantText);
+      summary = await invokeAgent("prompt-summarisation", input, sessionID, config, model);
+    } else {
+      const newUserMsg = userMessages[userMessages.length - 1] || currentPrompt;
+      const input = formatIncrementalInput(existing.summary, newUserMsg, lastAssistantText);
+      summary = await invokeAgent("prompt-summarisation", input, sessionID, config, model);
+    }
+
+    if (!summary || !summary.trim()) {
+      summary = existing?.summary ?? "";
+    }
+
+    return {
+      summary: summary.trim(),
+      lastMessageID: latestMessageID,
+      messageCount: existing ? existing.messageCount + 1 : 1,
+    };
+  }
+
   // ── Pipeline ───────────────────────────────────────────
 
   async function runPipeline(
@@ -525,6 +657,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         corrected: null,
         detectedLanguage: null,
         mistakes: [],
+        contextSummary: "",
       };
 
     const skipCorrection = enhancement && !translation && correction;
@@ -598,17 +731,24 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       notify("translation", "skipped");
     }
 
+    // ── Context summarisation (only with enhancement) ──
+    let contextSummary = "";
+    if (enhancement) {
+      notify("context", "starting");
+      const t0 = Date.now();
+      const ctxResult = await summariseContext(sessionID, working, config);
+      contextSummary = ctxResult.summary;
+      sessionContexts.set(sessionID, ctxResult);
+      debugLog(`context: summarisation took ${Date.now() - t0}ms`);
+      notify("context", "complete");
+    }
+
     // ── Enhancement ──
     if (enhancement) {
       notify("enhancement", "starting");
-      const ctx = priorContexts.get(sessionID) ?? [];
       let enhanceInput = "";
-      if (ctx.length > 0) {
-        enhanceInput += "Prior prompts in this session:\n";
-        for (const p of ctx) {
-          enhanceInput += `- ${p}\n`;
-        }
-        enhanceInput += "\n";
+      if (contextSummary) {
+        enhanceInput += `Conversation context: ${contextSummary}\n\n`;
       }
       enhanceInput += working;
 
@@ -626,7 +766,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       notify("enhancement", "skipped");
     }
 
-    return { result: working, corrected, detectedLanguage, mistakes };
+    return { result: working, corrected, detectedLanguage, mistakes, contextSummary };
   }
 
   // ── Hooks ──────────────────────────────────────────────
@@ -636,14 +776,13 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     event: async ({ event }: { event: any }) => {
       if (event.type === "session.deleted") {
         const sid = event.properties?.sessionID ?? event.properties?.info?.id;
-        if (sid) priorContexts.delete(sid);
+        if (sid) sessionContexts.delete(sid);
       }
     },
 
     // Primary pipeline — intercept user messages only
     "chat.message": async (input: any, output: any) => {
-      const subAgents = new Set(["prompt-correction", "prompt-translation", "prompt-enhancement"]);
-      if (input.agent && subAgents.has(input.agent)) return;
+      if (input.agent && SUB_AGENTS.has(input.agent)) return;
 
       // Extract text from parts
       const textPart = output.parts?.find((p: any) => p.type === "text" && p.text);
@@ -670,6 +809,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       let corrected: string | null;
       let detectedLanguage: string | null;
       let mistakes: PipelineResult["mistakes"];
+      let contextSummary = "";
 
       try {
         const pipelineResult = await runPipeline(originalText, input.sessionID, config, notify);
@@ -677,6 +817,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         corrected = pipelineResult.corrected;
         detectedLanguage = pipelineResult.detectedLanguage;
         mistakes = pipelineResult.mistakes;
+        contextSummary = pipelineResult.contextSummary;
       } catch (err) {
         debugLog("pipeline failed", err);
         await toast("Pipeline error — original prompt sent", "error", 5000);
@@ -689,12 +830,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
 
       // Replace text
       textPart.text = result;
-
-      // Update in-memory prior context
-      const ctx = priorContexts.get(input.sessionID) ?? [];
-      ctx.push(result);
-      if (ctx.length > CONTEXT_WINDOW) ctx.shift();
-      priorContexts.set(input.sessionID, ctx);
 
       // Audit
       if (config.audit) {
@@ -711,6 +846,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
             correction: config.correction ? config.correction_model : null,
             translation: config.translation ? config.translation_model : null,
             enhancement: config.enhancement ? config.enhancement_model : null,
+            context: config.enhancement ? config.correction_model : null,
           },
         };
         writeAudit(AUDIT_PATH, entry);
@@ -741,9 +877,14 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         const stages: string[] = [
           config.correction ? "correction ✓" : "correction —",
           config.translation ? "translation ✓" : "translation —",
+          config.enhancement ? "context ✓" : "",
           config.enhancement ? "enhancement ✓" : "enhancement —",
-        ];
+        ].filter(Boolean);
         lines.push(`Pipeline: ${stages.join(" | ")}`);
+
+        if (contextSummary) {
+          lines.push(`Context: ${contextSummary.substring(0, 200)}`);
+        }
 
         debugLog(lines.join("\n"));
       }
