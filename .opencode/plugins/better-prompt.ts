@@ -24,6 +24,8 @@ interface PipelineResult {
   mistakes: Array<{ type: string; original: string; correction: string }>;
 }
 
+type StageNotifier = (stage: string, status: "starting" | "complete" | "skipped") => void;
+
 const CONFIG_DEFAULTS: Config = {
   enabled: true,
   correction: true,
@@ -35,8 +37,6 @@ const CONFIG_DEFAULTS: Config = {
   audit: true,
   verbose: false,
 };
-
-const AGENT_NAMES = new Set(["prompt-correction", "prompt-translation", "prompt-enhancement"]);
 
 const CONTEXT_WINDOW = 5;
 
@@ -410,6 +410,53 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     }
   }
 
+  async function toast(
+    message: string,
+    variant: "info" | "success" | "error" = "info",
+    duration = 4000,
+  ): Promise<void> {
+    try {
+      await client.tui.showToast({ body: { message: `[bp] ${message}`, variant, duration } });
+    } catch {
+      // TUI may not be available in headless/CLI mode
+    }
+  }
+
+  async function watchSessionEvents(
+    childSessionID: string,
+    label: string,
+    config: Config,
+  ): Promise<void> {
+    if (!config.verbose) return;
+    try {
+      const eventStream = await client.event.subscribe();
+      for await (const event of eventStream.stream) {
+        const e = event as any;
+        const sid = e.properties?.sessionID;
+        if (sid !== childSessionID) continue;
+
+        if (e.type === "session.idle") {
+          debugLog(`[${label}] session idle`);
+          break;
+        }
+        if (e.type === "session.error") {
+          debugLog(`[${label}] session error`, JSON.stringify(e.properties?.error));
+          break;
+        }
+        if (e.type === "session.status") {
+          debugLog(`[${label}] session status: ${JSON.stringify(e.properties?.status)}`);
+        } else if (e.type === "message.part.updated") {
+          const part = e.properties?.part;
+          if (part?.type === "tool") {
+            debugLog(`[${label}] tool: ${part.title || part.tool?.name || "unknown"}`);
+          }
+        }
+      }
+    } catch (err) {
+      debugLog(`[${label}] event stream error`, err);
+    }
+  }
+
   // In-memory prior context: sessionID → sliding window of enhanced prompts
   const priorContexts = new Map<string, string[]>();
 
@@ -419,15 +466,19 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     agent: string,
     text: string,
     sessionID: string,
+    config: Config,
     model?: { providerID: string; modelID: string },
   ): Promise<string> {
     try {
-      // Create independent session (no parentID) so the agent doesn't
-      // inherit conversation history that confuses the correction prompt
       const { data: child } = await client.session.create({
         body: {},
       });
-      if (!child) return text;
+      if (!child) {
+        await toast(`${agent}: could not create session`, "error");
+        return text;
+      }
+
+      watchSessionEvents(child.id, agent, config).catch(() => {});
 
       const { data: result } = await client.session.prompt({
         body: {
@@ -444,6 +495,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       return textPart && "text" in textPart ? (textPart as any).text : text;
     } catch (err) {
       debugLog(`invokeAgent(${agent}) failed`, err);
+      await toast(`${agent} error`, "error");
       return text;
     }
   }
@@ -454,6 +506,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     text: string,
     sessionID: string,
     config: Config,
+    notify: StageNotifier,
   ): Promise<PipelineResult> {
     let working = text;
     let corrected: string | null = null;
@@ -474,27 +527,28 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         mistakes: [],
       };
 
-    // When enhancement is enabled without translation, correction is redundant —
-    // enhancement subsumes grammar/spelling fixes.
     const skipCorrection = enhancement && !translation && correction;
-    // When translation is enabled without correction, still run correction
-    // to detect language — then discard corrections.
     const correctionOnlyForLanguage = translation && !correction;
 
     // ── Correction ──
     if (!skipCorrection && (correction || correctionOnlyForLanguage)) {
+      notify("correction", "starting");
+      const t0 = Date.now();
       const model = await resolveModel(config.correction_model, CONFIG_DEFAULTS.correction_model);
-      const raw = await invokeAgent("prompt-correction", working, sessionID, model);
+      debugLog(`correction: resolveModel took ${Date.now() - t0}ms`);
+      const t1 = Date.now();
+      const raw = await invokeAgent("prompt-correction", working, sessionID, config, model);
+      debugLog(
+        `correction: invokeAgent took ${Date.now() - t1}ms (total so far ${Date.now() - t0}ms)`,
+      );
 
+      let correctionFailed = false;
       try {
-        // Strip markdown code fences if the model wrapped the JSON
         const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
         const cleaned = fenceMatch ? fenceMatch[1].trim() : raw.trim();
-        // Agent returns JSON: { corrected, language, mistakes }
         const parsed = JSON.parse(cleaned);
         if (parsed.corrected && typeof parsed.corrected === "string") {
           if (correctionOnlyForLanguage) {
-            // Discard corrections — keep only language detection
             detectedLanguage = parsed.language || null;
           } else {
             working = parsed.corrected;
@@ -504,29 +558,49 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
               mistakes = parsed.mistakes;
             }
           }
+        } else {
+          correctionFailed = true;
+          debugLog(`correction agent returned JSON without "corrected" field`);
         }
       } catch {
-        // Agent returned non-JSON — keep original text unchanged
+        correctionFailed = true;
         debugLog(`correction agent returned non-JSON (first 200 chars)`, raw?.substring(0, 200));
       }
+      if (correctionFailed) {
+        await toast("Correction failed — using original prompt", "error", 3000);
+      }
+      notify("correction", "complete");
+    } else {
+      notify("correction", "skipped");
     }
 
     // ── Translation ──
     if (translation) {
       if (detectedLanguage === "en") {
-        // Already English — skip translation
+        notify("translation", "skipped");
       } else {
+        notify("translation", "starting");
         const model = await resolveModel(
           config.translation_model,
           CONFIG_DEFAULTS.translation_model,
         );
-        const translated = await invokeAgent("prompt-translation", working, sessionID, model);
+        const translated = await invokeAgent(
+          "prompt-translation",
+          working,
+          sessionID,
+          config,
+          model,
+        );
         if (translated && translated.trim()) working = translated;
+        notify("translation", "complete");
       }
+    } else {
+      notify("translation", "skipped");
     }
 
     // ── Enhancement ──
     if (enhancement) {
+      notify("enhancement", "starting");
       const ctx = priorContexts.get(sessionID) ?? [];
       let enhanceInput = "";
       if (ctx.length > 0) {
@@ -539,8 +613,17 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       enhanceInput += working;
 
       const model = await resolveModel(config.enhancement_model, CONFIG_DEFAULTS.enhancement_model);
-      const enhanced = await invokeAgent("prompt-enhancement", enhanceInput, sessionID, model);
+      const enhanced = await invokeAgent(
+        "prompt-enhancement",
+        enhanceInput,
+        sessionID,
+        config,
+        model,
+      );
       if (enhanced && enhanced.trim()) working = enhanced;
+      notify("enhancement", "complete");
+    } else {
+      notify("enhancement", "skipped");
     }
 
     return { result: working, corrected, detectedLanguage, mistakes };
@@ -557,10 +640,10 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       }
     },
 
-    // Primary pipeline — intercept user messages
+    // Primary pipeline — intercept user messages only
     "chat.message": async (input: any, output: any) => {
-      // Recursion guard: skip processing for our own agents
-      if (input.agent && AGENT_NAMES.has(input.agent)) return;
+      const subAgents = new Set(["prompt-correction", "prompt-translation", "prompt-enhancement"]);
+      if (input.agent && subAgents.has(input.agent)) return;
 
       // Extract text from parts
       const textPart = output.parts?.find((p: any) => p.type === "text" && p.text);
@@ -572,12 +655,37 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       const config = parseConfig(CONFIG_PATH);
       if (!config.enabled) return;
 
-      // Run pipeline
-      const { result, corrected, detectedLanguage, mistakes } = await runPipeline(
-        originalText,
-        input.sessionID,
-        config,
-      );
+      // Show initial toast to fix "frozen" UX
+      await toast("Processing prompt...", "info", 15000);
+
+      // Stage notifier — shows toast at each pipeline stage start
+      const notify: StageNotifier = (stage, status) => {
+        if (status === "starting") {
+          toast(`${stage}...`, "info", 10000).catch(() => {});
+        }
+        debugLog(`[pipeline] ${stage} ${status}`);
+      };
+
+      let result: string;
+      let corrected: string | null;
+      let detectedLanguage: string | null;
+      let mistakes: PipelineResult["mistakes"];
+
+      try {
+        const pipelineResult = await runPipeline(originalText, input.sessionID, config, notify);
+        result = pipelineResult.result;
+        corrected = pipelineResult.corrected;
+        detectedLanguage = pipelineResult.detectedLanguage;
+        mistakes = pipelineResult.mistakes;
+      } catch (err) {
+        debugLog("pipeline failed", err);
+        await toast("Pipeline error — original prompt sent", "error", 5000);
+        return;
+      }
+
+      // Completion toast
+      const changed = result !== originalText;
+      await toast(changed ? "Prompt modified" : "No changes", changed ? "success" : "info", 3000);
 
       // Replace text
       textPart.text = result;
@@ -611,7 +719,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       // Verbose output — write to debug log (cannot push new parts
       // without messageID, causes SchemaError in OpenCode >=1.16)
       if (config.verbose) {
-        const changed = result !== originalText;
         const lines: string[] = [`[better-prompt] ${changed ? "prompt modified" : "no changes"}`];
 
         if (changed) {

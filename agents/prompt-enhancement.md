@@ -3,7 +3,7 @@ name: prompt-enhancement
 description: Enhances prompts for clarity, specificity, and structure. Returns only the enhanced prompt text with no explanation.
 model: sonnet
 effort: low
-maxTurns: 1
+maxTurns: 3
 color: blue
 tools: []
 ---

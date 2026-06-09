@@ -3,10 +3,9 @@ description: |
   Enhances prompts for clarity, specificity, and structure. Returns only the enhanced prompt text with no explanation.
 mode: subagent
 temperature: 0.3
-steps: 1
+steps: 3
 permission:
-  edit: deny
-  bash: deny
+  "*": deny
 color: "#3B82F6"
 ---
 

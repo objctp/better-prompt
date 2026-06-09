@@ -3,7 +3,7 @@ name: prompt-translation
 description: Translates non-English prompts into English prior to enhancement. Passes English through unchanged. Preserves @mentions and technical terms exactly.
 model: haiku
 effort: low
-maxTurns: 1
+maxTurns: 3
 color: green
 tools: []
 ---

@@ -3,10 +3,9 @@ description: |
   Corrects grammar and spelling in prompts whilst preserving intent, style, and punctuation. Returns structured JSON with corrections and mistake details.
 mode: subagent
 temperature: 0.1
-steps: 1
+steps: 3
 permission:
-  edit: deny
-  bash: deny
+  "*": deny
 color: "#06B6D4"
 ---
 

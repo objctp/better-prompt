@@ -74,8 +74,7 @@ function generateAgent(srcPath) {
     `temperature: ${TEMP_MAP[modelShort] ?? 0.1}`,
     `steps: ${maxTurns || 1}`,
     "permission:",
-    "  edit: deny",
-    "  bash: deny",
+    '  "*": deny',
   ];
   if (color) {
     const hex = COLOR_MAP[color] || (color.startsWith("#") ? color : null);

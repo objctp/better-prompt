@@ -3,7 +3,7 @@ name: prompt-correction
 description: Corrects grammar and spelling in prompts whilst preserving intent, style, and punctuation. Returns structured JSON with corrections and mistake details.
 model: haiku
 effort: low
-maxTurns: 1
+maxTurns: 3
 color: cyan
 tools: []
 ---

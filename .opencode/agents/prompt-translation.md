@@ -3,10 +3,9 @@ description: |
   Translates non-English prompts into English prior to enhancement. Passes English through unchanged. Preserves @mentions and technical terms exactly.
 mode: subagent
 temperature: 0.1
-steps: 1
+steps: 3
 permission:
-  edit: deny
-  bash: deny
+  "*": deny
 color: "#22C55E"
 ---
 
