@@ -26,6 +26,7 @@
   "agents": [
     "./agents/prompt-correction.md",
     "./agents/prompt-translation.md",
-    "./agents/prompt-enhancement.md"
+    "./agents/prompt-enhancement.md",
+    "./agents/prompt-summarisation.md"
   ]
 }

@@ -1,9 +1,23 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 // ── Types ──────────────────────────────────────────────────
+
+interface Usage {
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+}
 
 interface Config {
   enabled: boolean;
@@ -23,9 +37,13 @@ interface PipelineResult {
   detectedLanguage: string | null;
   mistakes: Array<{ type: string; original: string; correction: string }>;
   contextSummary: string;
+  usage: Usage;
 }
 
-type StageNotifier = (stage: string, status: "starting" | "complete" | "skipped") => void;
+type StageNotifier = (
+  stage: string,
+  status: "starting" | "complete" | "skipped",
+) => void;
 
 interface SessionContext {
   summary: string;
@@ -91,7 +109,12 @@ interface CatalogProvider {
 
 type Catalog = Record<string, CatalogProvider>;
 
-const CATALOG_CACHE_PATH = join(homedir(), ".cache", "opencode", "models-dev.json");
+const CATALOG_CACHE_PATH = join(
+  homedir(),
+  ".cache",
+  "opencode",
+  "models-dev.json",
+);
 
 const CATALOG_STALE_MS = 24 * 60 * 60 * 1000;
 
@@ -103,7 +126,8 @@ async function loadCatalog(): Promise<Catalog> {
   const fs = await import("node:fs");
   const famt = fs.promises;
 
-  const isStale = (mtime: number): boolean => Date.now() - mtime > CATALOG_STALE_MS;
+  const isStale = (mtime: number): boolean =>
+    Date.now() - mtime > CATALOG_STALE_MS;
 
   try {
     const stat = await famt.stat(CATALOG_CACHE_PATH);
@@ -169,7 +193,13 @@ async function getConnectedProviders(): Promise<Set<string>> {
 
   // 1. Auth.json credentials
   try {
-    const authPath = join(homedir(), ".local", "share", "opencode", "auth.json");
+    const authPath = join(
+      homedir(),
+      ".local",
+      "share",
+      "opencode",
+      "auth.json",
+    );
     const raw = readFileSync(authPath, "utf-8");
     const auth = JSON.parse(raw);
     for (const key of Object.keys(auth)) connected.add(key);
@@ -208,7 +238,9 @@ function loadMergedConfig(): OpenCodeConfig {
       return {};
     }
   };
-  const globalCfg = load(join(homedir(), ".config", "opencode", "opencode.json"));
+  const globalCfg = load(
+    join(homedir(), ".config", "opencode", "opencode.json"),
+  );
   const projCfg = load("opencode.json");
   return deepMerge(globalCfg, projCfg);
 }
@@ -232,11 +264,15 @@ function partitionByRole(models: ModelCandidate[]): {
 
   const fast = byCost[0] || null;
   const powerful = byCtx[0] || null;
-  const capable = byCost.length > 2 ? byCost[Math.floor(byCost.length / 2)] : byCost[1] || fast;
+  const capable = byCost.length > 2
+    ? byCost[Math.floor(byCost.length / 2)]
+    : byCost[1] || fast;
   return { fast, capable, powerful };
 }
 
-async function resolveShortName(shortName: string): Promise<ModelRef | undefined> {
+async function resolveShortName(
+  shortName: string,
+): Promise<ModelRef | undefined> {
   const connected = await getConnectedProviders();
   const catalog = await loadCatalog();
   const cfg = loadMergedConfig();
@@ -246,7 +282,8 @@ async function resolveShortName(shortName: string): Promise<ModelRef | undefined
   for (const pid of connected) {
     const catModels = catalog[pid]?.models ?? {};
     const customModels =
-      (cfg.provider as Record<string, Record<string, unknown>>)?.[pid]?.models ?? {};
+      (cfg.provider as Record<string, Record<string, unknown>>)?.[pid]
+        ?.models ?? {};
     const merged = { ...catModels, ...customModels };
 
     for (const [mid, m] of Object.entries(merged)) {
@@ -263,38 +300,45 @@ async function resolveShortName(shortName: string): Promise<ModelRef | undefined
   const { fast, capable, powerful } = partitionByRole(allModels);
 
   const ALIASES: Record<string, ModelRef | null> = {
-    fast: fast ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] } : null,
+    fast: fast
+      ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] }
+      : null,
     capable: capable
       ? {
-          providerID: capable.id.split("/")[0],
-          modelID: capable.id.split("/")[1],
-        }
+        providerID: capable.id.split("/")[0],
+        modelID: capable.id.split("/")[1],
+      }
       : null,
     powerful: powerful
       ? {
-          providerID: powerful.id.split("/")[0],
-          modelID: powerful.id.split("/")[1],
-        }
+        providerID: powerful.id.split("/")[0],
+        modelID: powerful.id.split("/")[1],
+      }
       : null,
-    haiku: fast ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] } : null,
+    haiku: fast
+      ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] }
+      : null,
     sonnet: capable
       ? {
-          providerID: capable.id.split("/")[0],
-          modelID: capable.id.split("/")[1],
-        }
+        providerID: capable.id.split("/")[0],
+        modelID: capable.id.split("/")[1],
+      }
       : null,
     opus: powerful
       ? {
-          providerID: powerful.id.split("/")[0],
-          modelID: powerful.id.split("/")[1],
-        }
+        providerID: powerful.id.split("/")[0],
+        modelID: powerful.id.split("/")[1],
+      }
       : null,
   };
 
   return ALIASES[shortName] ?? undefined;
 }
 
-function resolveModel(shortName: string, defaultName: string): Promise<ModelRef | undefined> {
+function resolveModel(
+  shortName: string,
+  defaultName: string,
+): Promise<ModelRef | undefined> {
   if (shortName === defaultName) return Promise.resolve(undefined);
 
   const slashIdx = shortName.indexOf("/");
@@ -338,9 +382,15 @@ function parseConfig(configPath: string): Config {
     correction: bool("correction", CONFIG_DEFAULTS.correction),
     correction_model: str("correction_model", CONFIG_DEFAULTS.correction_model),
     translation: bool("translation", CONFIG_DEFAULTS.translation),
-    translation_model: str("translation_model", CONFIG_DEFAULTS.translation_model),
+    translation_model: str(
+      "translation_model",
+      CONFIG_DEFAULTS.translation_model,
+    ),
     enhancement: bool("enhancement", CONFIG_DEFAULTS.enhancement),
-    enhancement_model: str("enhancement_model", CONFIG_DEFAULTS.enhancement_model),
+    enhancement_model: str(
+      "enhancement_model",
+      CONFIG_DEFAULTS.enhancement_model,
+    ),
     audit: bool("audit", CONFIG_DEFAULTS.audit),
     verbose: bool("verbose", CONFIG_DEFAULTS.verbose),
   };
@@ -390,6 +440,7 @@ interface AuditEntry {
     enhancement: string | null;
     context: string | null;
   };
+  usage: Usage;
 }
 
 function writeAudit(auditPath: string, entry: AuditEntry): void {
@@ -418,8 +469,15 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     try {
       mkdirSync(AUDIT_DIR, { recursive: true });
       const ts = new Date().toISOString();
-      const errStr = error instanceof Error ? error.message : error ? String(error) : "";
-      appendFileSync(DEBUG_PATH, `[${ts}] ${message}${errStr ? " — " + errStr : ""}\n`);
+      const errStr = error instanceof Error
+        ? error.message
+        : error
+        ? String(error)
+        : "";
+      appendFileSync(
+        DEBUG_PATH,
+        `[${ts}] ${message}${errStr ? " — " + errStr : ""}\n`,
+      );
     } catch {
       // best effort
     }
@@ -431,7 +489,9 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     duration = 4000,
   ): Promise<void> {
     try {
-      await client.tui.showToast({ body: { message: `[bp] ${message}`, variant, duration } });
+      await client.tui.showToast({
+        body: { message: `[bp] ${message}`, variant, duration },
+      });
     } catch {
       // TUI may not be available in headless/CLI mode
     }
@@ -455,15 +515,24 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
           break;
         }
         if (e.type === "session.error") {
-          debugLog(`[${label}] session error`, JSON.stringify(e.properties?.error));
+          debugLog(
+            `[${label}] session error`,
+            JSON.stringify(e.properties?.error),
+          );
           break;
         }
         if (e.type === "session.status") {
-          debugLog(`[${label}] session status: ${JSON.stringify(e.properties?.status)}`);
+          debugLog(
+            `[${label}] session status: ${
+              JSON.stringify(e.properties?.status)
+            }`,
+          );
         } else if (e.type === "message.part.updated") {
           const part = e.properties?.part;
           if (part?.type === "tool") {
-            debugLog(`[${label}] tool: ${part.title || part.tool?.name || "unknown"}`);
+            debugLog(
+              `[${label}] tool: ${part.title || part.tool?.name || "unknown"}`,
+            );
           }
         }
       }
@@ -483,14 +552,23 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     sessionID: string,
     config: Config,
     model?: { providerID: string; modelID: string },
-  ): Promise<string> {
+  ): Promise<{ text: string; usage: Usage }> {
     try {
       const { data: child } = await client.session.create({
         body: {},
       });
       if (!child) {
         await toast(`${agent}: could not create session`, "error");
-        return text;
+        return {
+          text,
+          usage: {
+            cost: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+          },
+        };
       }
 
       watchSessionEvents(child.id, agent, config).catch(() => {});
@@ -504,22 +582,60 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         path: { id: child.id },
       });
 
-      if (!result?.parts) return text;
+      if (!result?.parts) {
+        return {
+          text,
+          usage: {
+            cost: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+          },
+        };
+      }
 
-      const textPart = result.parts.find((p: any) => p.type === "text" && p.text);
-      return textPart && "text" in textPart ? (textPart as any).text : text;
+      const textPart = result.parts.find((p: any) =>
+        p.type === "text" && p.text
+      );
+      const resultText = textPart && "text" in textPart
+        ? (textPart as any).text
+        : text;
+
+      const info = (result as any).info;
+      const usage: Usage = {
+        cost: info?.cost ?? 0,
+        inputTokens: info?.tokens?.input ?? 0,
+        outputTokens: info?.tokens?.output ?? 0,
+        cacheWriteTokens: info?.tokens?.cache?.write ?? 0,
+        cacheReadTokens: info?.tokens?.cache?.read ?? 0,
+      };
+
+      return { text: resultText, usage };
     } catch (err) {
       debugLog(`invokeAgent(${agent}) failed`, err);
       await toast(`${agent} error`, "error");
-      return text;
+      return {
+        text,
+        usage: {
+          cost: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheWriteTokens: 0,
+          cacheReadTokens: 0,
+        },
+      };
     }
   }
 
   // ── Context summarisation ──────────────────────────────────
 
-  function formatFullSummaryInput(userMessages: string[], lastAssistant: string): string {
+  function formatFullSummaryInput(
+    userMessages: string[],
+    lastAssistant: string,
+  ): string {
     let input =
-      "Summarise this conversation in 2-3 sentences. Focus on the topic, technical context, user's goal, and key decisions. Be concise.\n\n";
+      "Summarise this conversation in 3-5 sentences. Focus on the topic, technical context, user's goal, and key decisions. Be concise.\n\n";
     for (const msg of userMessages) {
       input += `User: ${msg}\n`;
     }
@@ -535,12 +651,13 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     userMsg: string,
     assistantMsg: string,
   ): string {
-    let input = `Given this summary:\n${existingSummary}\n\nUpdate it with this new exchange:\nUser: ${userMsg}`;
+    let input =
+      `Given this summary:\n${existingSummary}\n\nUpdate it with this new exchange:\nUser: ${userMsg}`;
     if (assistantMsg) {
       input += `\nAssistant: ${assistantMsg}`;
     }
     input +=
-      "\n\nProvide an updated summary in 2-3 sentences. Drop stale details if no longer relevant.\n\nUpdated summary:";
+      "\n\nProvide an updated summary in 3-5 sentences. Drop stale details if no longer relevant.\n\nUpdated summary:";
     return input;
   }
 
@@ -557,10 +674,35 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
 
   async function summariseContext(
     sessionID: string,
-    currentPrompt: string,
+    currentMessageID: string,
     config: Config,
-  ): Promise<{ summary: string; lastMessageID: string; messageCount: number }> {
+  ): Promise<
+    {
+      summary: string;
+      lastMessageID: string;
+      messageCount: number;
+      usage: Usage;
+    }
+  > {
     const existing = sessionContexts.get(sessionID);
+    const zeroUsage: Usage = {
+      cost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+    };
+
+    // First prompt short circuit: nothing to summarise yet
+    if (!existing || existing.messageCount === 0) {
+      debugLog("summarisation: skipped (first prompt)");
+      return {
+        summary: "",
+        lastMessageID: existing?.lastMessageID ?? "",
+        messageCount: 1,
+        usage: zeroUsage,
+      };
+    }
 
     let messages: any[];
     try {
@@ -572,6 +714,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         summary: existing?.summary ?? "",
         lastMessageID: existing?.lastMessageID ?? "",
         messageCount: existing?.messageCount ?? 0,
+        usage: zeroUsage,
       };
     }
 
@@ -583,52 +726,95 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       const info = msg?.info;
       if (!info?.id) continue;
 
-      const isSubAgent = info.agent && SUB_AGENTS.has(info.agent);
-      if (isSubAgent) continue;
+      // Exclude the current message being processed
+      if (currentMessageID && info.id === currentMessageID) continue;
+
+      // Exclude sub-agent messages
+      if (info.agent && SUB_AGENTS.has(info.agent)) continue;
 
       const text = extractTextFromParts(msg?.parts);
       if (!text) continue;
 
       if (info.role === "user") {
-        userMessages.push(text.substring(0, 500));
+        userMessages.push(text);
       } else if (info.role === "assistant") {
-        lastAssistantText = text.substring(0, 1000);
+        lastAssistantText = text;
       }
 
       latestMessageID = info.id;
     }
 
-    if (userMessages.length === 0) {
+    if (userMessages.length === 0 && !lastAssistantText) {
       return {
         summary: existing?.summary ?? "",
         lastMessageID: (latestMessageID || existing?.lastMessageID) ?? "",
         messageCount: existing?.messageCount ?? 0,
+        usage: zeroUsage,
       };
     }
 
-    const needFullRefresh =
-      !existing || existing.messageCount >= FULL_REFRESH_THRESHOLD || existing.lastMessageID === "";
+    const needFullRefresh = !existing ||
+      existing.messageCount >= FULL_REFRESH_THRESHOLD ||
+      existing.lastMessageID === "";
 
-    const model = await resolveModel(config.correction_model, CONFIG_DEFAULTS.correction_model);
     let summary: string;
+    let summarisationUsage: Usage = { ...zeroUsage };
 
     if (needFullRefresh) {
+      // Full refresh uses enhancement_model (stronger reasoning for full history)
+      const model = await resolveModel(
+        config.enhancement_model,
+        CONFIG_DEFAULTS.enhancement_model,
+      );
       const input = formatFullSummaryInput(userMessages, lastAssistantText);
-      summary = await invokeAgent("prompt-summarisation", input, sessionID, config, model);
+      debugLog(`summarisation (${config.enhancement_model}): full refresh`);
+      const t0 = Date.now();
+      const fullResult = await invokeAgent(
+        "prompt-summarisation",
+        input,
+        sessionID,
+        config,
+        model,
+      );
+      summary = fullResult.text;
+      summarisationUsage = fullResult.usage;
+      debugLog(`summarisation (full refresh): took ${Date.now() - t0}ms`);
     } else {
-      const newUserMsg = userMessages[userMessages.length - 1] || currentPrompt;
-      const input = formatIncrementalInput(existing.summary, newUserMsg, lastAssistantText);
-      summary = await invokeAgent("prompt-summarisation", input, sessionID, config, model);
+      // Incremental uses correction_model (cheaper, small input)
+      const model = await resolveModel(
+        config.correction_model,
+        CONFIG_DEFAULTS.correction_model,
+      );
+      const newUserMsg = userMessages[userMessages.length - 1] || "";
+      const input = formatIncrementalInput(
+        existing.summary,
+        newUserMsg,
+        lastAssistantText,
+      );
+      debugLog(`summarisation (${config.correction_model}): incremental`);
+      const t0 = Date.now();
+      const incrResult = await invokeAgent(
+        "prompt-summarisation",
+        input,
+        sessionID,
+        config,
+        model,
+      );
+      summary = incrResult.text;
+      summarisationUsage = incrResult.usage;
+      debugLog(`summarisation (incremental): took ${Date.now() - t0}ms`);
     }
 
     if (!summary || !summary.trim()) {
+      debugLog("summarisation: agent returned empty, keeping existing summary");
       summary = existing?.summary ?? "";
     }
 
     return {
       summary: summary.trim(),
       lastMessageID: latestMessageID,
-      messageCount: existing ? existing.messageCount + 1 : 1,
+      messageCount: existing ? existing.messageCount + 1 : 2,
+      usage: summarisationUsage,
     };
   }
 
@@ -639,6 +825,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     sessionID: string,
     config: Config,
     notify: StageNotifier,
+    currentMessageID?: string,
   ): Promise<PipelineResult> {
     let working = text;
     let corrected: string | null = null;
@@ -648,17 +835,40 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       original: string;
       correction: string;
     }> = [];
+    const totalUsage: Usage = {
+      cost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+    };
+
+    function addUsage(u: {
+      cost: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheWriteTokens: number;
+      cacheReadTokens: number;
+    }) {
+      totalUsage.cost += u.cost;
+      totalUsage.inputTokens += u.inputTokens;
+      totalUsage.outputTokens += u.outputTokens;
+      totalUsage.cacheWriteTokens += u.cacheWriteTokens;
+      totalUsage.cacheReadTokens += u.cacheReadTokens;
+    }
 
     const { correction, translation, enhancement } = config;
     const anyStage = correction || translation || enhancement;
-    if (!anyStage)
+    if (!anyStage) {
       return {
         result: text,
         corrected: null,
         detectedLanguage: null,
         mistakes: [],
         contextSummary: "",
+        usage: totalUsage,
       };
+    }
 
     const skipCorrection = enhancement && !translation && correction;
     const correctionOnlyForLanguage = translation && !correction;
@@ -667,12 +877,25 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     if (!skipCorrection && (correction || correctionOnlyForLanguage)) {
       notify("correction", "starting");
       const t0 = Date.now();
-      const model = await resolveModel(config.correction_model, CONFIG_DEFAULTS.correction_model);
+      const model = await resolveModel(
+        config.correction_model,
+        CONFIG_DEFAULTS.correction_model,
+      );
       debugLog(`correction: resolveModel took ${Date.now() - t0}ms`);
       const t1 = Date.now();
-      const raw = await invokeAgent("prompt-correction", working, sessionID, config, model);
+      const correctionResult = await invokeAgent(
+        "prompt-correction",
+        working,
+        sessionID,
+        config,
+        model,
+      );
+      addUsage(correctionResult.usage);
+      const raw = correctionResult.text;
       debugLog(
-        `correction: invokeAgent took ${Date.now() - t1}ms (total so far ${Date.now() - t0}ms)`,
+        `correction: invokeAgent took ${Date.now() - t1}ms (total so far ${
+          Date.now() - t0
+        }ms)`,
       );
 
       let correctionFailed = false;
@@ -697,7 +920,10 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         }
       } catch {
         correctionFailed = true;
-        debugLog(`correction agent returned non-JSON (first 200 chars)`, raw?.substring(0, 200));
+        debugLog(
+          `correction agent returned non-JSON (first 200 chars)`,
+          raw?.substring(0, 200),
+        );
       }
       if (correctionFailed) {
         await toast("Correction failed — using original prompt", "error", 3000);
@@ -717,14 +943,17 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
           config.translation_model,
           CONFIG_DEFAULTS.translation_model,
         );
-        const translated = await invokeAgent(
+        const translationResult = await invokeAgent(
           "prompt-translation",
           working,
           sessionID,
           config,
           model,
         );
-        if (translated && translated.trim()) working = translated;
+        addUsage(translationResult.usage);
+        if (translationResult.text && translationResult.text.trim()) {
+          working = translationResult.text;
+        }
         notify("translation", "complete");
       }
     } else {
@@ -735,11 +964,14 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     let contextSummary = "";
     if (enhancement) {
       notify("context", "starting");
-      const t0 = Date.now();
-      const ctxResult = await summariseContext(sessionID, working, config);
+      const ctxResult = await summariseContext(
+        sessionID,
+        currentMessageID ?? "",
+        config,
+      );
       contextSummary = ctxResult.summary;
+      addUsage(ctxResult.usage);
       sessionContexts.set(sessionID, ctxResult);
-      debugLog(`context: summarisation took ${Date.now() - t0}ms`);
       notify("context", "complete");
     }
 
@@ -752,21 +984,34 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       }
       enhanceInput += working;
 
-      const model = await resolveModel(config.enhancement_model, CONFIG_DEFAULTS.enhancement_model);
-      const enhanced = await invokeAgent(
+      const model = await resolveModel(
+        config.enhancement_model,
+        CONFIG_DEFAULTS.enhancement_model,
+      );
+      const enhancementResult = await invokeAgent(
         "prompt-enhancement",
         enhanceInput,
         sessionID,
         config,
         model,
       );
-      if (enhanced && enhanced.trim()) working = enhanced;
+      addUsage(enhancementResult.usage);
+      if (enhancementResult.text && enhancementResult.text.trim()) {
+        working = enhancementResult.text;
+      }
       notify("enhancement", "complete");
     } else {
       notify("enhancement", "skipped");
     }
 
-    return { result: working, corrected, detectedLanguage, mistakes, contextSummary };
+    return {
+      result: working,
+      corrected,
+      detectedLanguage,
+      mistakes,
+      contextSummary,
+      usage: totalUsage,
+    };
   }
 
   // ── Hooks ──────────────────────────────────────────────
@@ -785,7 +1030,9 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       if (input.agent && SUB_AGENTS.has(input.agent)) return;
 
       // Extract text from parts
-      const textPart = output.parts?.find((p: any) => p.type === "text" && p.text);
+      const textPart = output.parts?.find((p: any) =>
+        p.type === "text" && p.text
+      );
       if (!textPart || !("text" in textPart)) return;
 
       const originalText = textPart.text;
@@ -810,14 +1057,28 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       let detectedLanguage: string | null;
       let mistakes: PipelineResult["mistakes"];
       let contextSummary = "";
+      let usage: Usage = {
+        cost: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+      };
 
       try {
-        const pipelineResult = await runPipeline(originalText, input.sessionID, config, notify);
+        const pipelineResult = await runPipeline(
+          originalText,
+          input.sessionID,
+          config,
+          notify,
+          input.messageID,
+        );
         result = pipelineResult.result;
         corrected = pipelineResult.corrected;
         detectedLanguage = pipelineResult.detectedLanguage;
         mistakes = pipelineResult.mistakes;
         contextSummary = pipelineResult.contextSummary;
+        usage = pipelineResult.usage;
       } catch (err) {
         debugLog("pipeline failed", err);
         await toast("Pipeline error — original prompt sent", "error", 5000);
@@ -826,7 +1087,11 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
 
       // Completion toast
       const changed = result !== originalText;
-      await toast(changed ? "Prompt modified" : "No changes", changed ? "success" : "info", 3000);
+      await toast(
+        changed ? "Prompt modified" : "No changes",
+        changed ? "success" : "info",
+        3000,
+      );
 
       // Replace text
       textPart.text = result;
@@ -848,6 +1113,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
             enhancement: config.enhancement ? config.enhancement_model : null,
             context: config.enhancement ? config.correction_model : null,
           },
+          usage,
         };
         writeAudit(AUDIT_PATH, entry);
       }
@@ -855,10 +1121,15 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       // Verbose output — write to debug log (cannot push new parts
       // without messageID, causes SchemaError in OpenCode >=1.16)
       if (config.verbose) {
-        const lines: string[] = [`[better-prompt] ${changed ? "prompt modified" : "no changes"}`];
+        const lines: string[] = [
+          `[better-prompt] ${changed ? "prompt modified" : "no changes"}`,
+        ];
 
         if (changed) {
-          const trunc = (s: string, n = 120) => (s.length > n ? s.slice(0, n) + "..." : s);
+          const trunc = (
+            s: string,
+            n = 120,
+          ) => (s.length > n ? s.slice(0, n) + "..." : s);
           lines.push(`Original:  "${trunc(originalText)}"`);
           lines.push(`Processed: "${trunc(result)}"`);
         }
@@ -884,6 +1155,14 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
 
         if (contextSummary) {
           lines.push(`Context: ${contextSummary.substring(0, 200)}`);
+        }
+
+        if (usage.cost > 0) {
+          lines.push(
+            `Cost: $${
+              usage.cost.toFixed(6)
+            } | Tokens: ${usage.inputTokens}in ${usage.outputTokens}out (${usage.cacheWriteTokens}cw ${usage.cacheReadTokens}cr)`,
+          );
         }
 
         debugLog(lines.join("\n"));

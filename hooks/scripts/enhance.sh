@@ -29,35 +29,277 @@ _detect_os
 ### :::: Private Functions :::: ########
 ###
 
-# Extract the last N prior prompts from the context file as a numbered list.
-# Prints nothing when file is missing or count is 0.
-enhance::extract_prior_context() {
-  local context_file="$1"
-  local count="$2"
+# Derive the session transcript path from env vars.  Sets SESSION_FILE global.
+enhance::resolve_session_file() {
+  local slug
+  slug=$(printf '%s' "${CLAUDE_PROJECT_DIR:-.}" | tr '/' '-')
+  SESSION_FILE="$HOME/.claude/projects/$slug/$CLAUDE_SESSION_ID.jsonl"
+}
 
-  if [[ ! -f "$context_file" ]] || [[ "$count" -eq 0 ]]; then
+# Read JSON context state and populate globals.
+# Resets to defaults if the stored session_id does not match the current session
+# — context is only meaningful within the session that created it.
+# Sets: CONTEXT_SUMMARY, CONTEXT_COUNT, CONTEXT_LAST_UUID
+enhance::read_context_state() {
+  local context_file="$1"
+  CONTEXT_SUMMARY=""
+  CONTEXT_COUNT=0
+  CONTEXT_LAST_UUID=""
+
+  if [[ ! -f "$context_file" ]]; then
     return 0
   fi
 
-  tail -n "$count" "$context_file" |
-    awk 'NF {printf "%d. \"%s\"\n", ++n, $0}' 2>/dev/null
+  local parsed stored_session_id current_session_id="${CLAUDE_SESSION_ID:-}"
+  parsed=$(jq -r --arg sid "$current_session_id" \
+    '[.summary // "", .prompt_count // 0, .last_uuid // "", .session_id // ""] | @tsv' \
+    <"$context_file" 2>/dev/null) || parsed=$'\t\t\t\t'
+
+  IFS=$'\t' read -r CONTEXT_SUMMARY CONTEXT_COUNT CONTEXT_LAST_UUID stored_session_id <<<"$parsed"
+
+  # Stale context from a different session — reset to defaults
+  if [[ -n "$stored_session_id" ]] && [[ "$stored_session_id" != "$current_session_id" ]]; then
+    CONTEXT_SUMMARY=""
+    CONTEXT_COUNT=0
+    CONTEXT_LAST_UUID=""
+  fi
   return 0
 }
 
-# Append a final prompt to the context file and trim to the last N lines.
-enhance::append_prior_context() {
+# Write JSON context state atomically.
+enhance::write_context_state() {
   local context_file="$1"
-  local count="$2"
-  local enhanced_text="$3"
+  local summary="$2"
+  local count="$3"
+  local last_uuid="$4"
 
-  [[ -z "$enhanced_text" ]] && return 0
+  local json
+  json=$(jq -n --arg s "$summary" --argjson c "$count" --arg u "$last_uuid" \
+    '{summary: $s, prompt_count: $c, last_uuid: $u}')
 
-  mkdir -p "$(dirname "$context_file")"
-  printf '%s\n' "$enhanced_text" >>"$context_file"
+  _atomic_write "$context_file" "$json"
+  return 0
+}
 
-  # Trim to last N lines (sliding window)
-  local trimmed
-  trimmed=$(tail -n "$count" "$context_file") && printf '%s\n' "$trimmed" >"$context_file"
+# Extract all user messages + all assistant text entries from the session
+# transcript, excluding the last user entry (the current prompt being enhanced).
+# Returns formatted "User: <text>" / "Assistant: <text>" lines.
+# Sets EXTRACT_LAST_UUID with the UUID of the last assistant message.
+enhance::extract_full_history() {
+  local session_file="$1"
+  EXTRACT_LAST_UUID=""
+
+  [[ ! -f "$session_file" ]] && return 0
+
+  # Two-pass approach:
+  #   Pass 1: find the UUID of the last user entry (to exclude it).
+  #   Pass 2: extract and format all messages before that entry.
+  local last_user_uuid
+  last_user_uuid=$(jq -r 'select(.type == "user") | .uuid' <"$session_file" 2>/dev/null | tail -1) || last_user_uuid=""
+
+  # Single jq pass: extract and format all messages
+  local output
+  output=$(jq -r --arg exclude_uuid "$last_user_uuid" '
+    def extract_text:
+      if .type == "user" then
+        (.message.content | if type == "string" then . elif type == "array" then [.[] | select(.type=="text") | .text] | join(" ") else "" end)
+      else
+        (if (.message.content | type) == "array" then [.message.content[] | select(.type=="text") | .text] | join(" ") else "" end)
+      end;
+
+    select(
+      (.type == "user" or .type == "assistant")
+      and (.isSidechain // false) == false
+    )
+    | .uuid as $uuid
+    | extract_text as $text
+    | select($text | length > 0)
+    | "\(.type | sub("assistant";"Assistant") | sub("user";"User")): \($text)"
+  ' <"$session_file" 2>/dev/null) || output=""
+
+  # Remove lines after and including the last user message
+  if [[ -n "$last_user_uuid" ]] && [[ -n "$output" ]]; then
+    output=$(awk -v uuid="$last_user_uuid" '
+      /^User: / { lines[NR] = $0; user_lines[NR] = 1; next }
+      { lines[NR] = $0 }
+      END {
+        # Find last user line and print everything before it
+        last_user = 0
+        for (i = NR; i >= 1; i--) {
+          if (user_lines[i]) { last_user = i; break }
+        }
+        for (i = 1; i < last_user; i++) {
+          if (lines[i] != "") print lines[i]
+        }
+      }
+    ' <<<"$output") || output=""
+  fi
+
+  printf '%s\n' "$output"
+
+  # Find the UUID of the last assistant text entry before the excluded user message
+  EXTRACT_LAST_UUID=$(jq -r --arg exclude_uuid "$last_user_uuid" '
+    select(
+      .type == "assistant"
+      and (.isSidechain // false) == false
+      and (.message.content | type) == "array"
+      and ([.message.content[] | select(.type=="text") | .text] | join("") | length) > 0
+    )
+    | .uuid
+  ' <"$session_file" 2>/dev/null | tail -1) || EXTRACT_LAST_UUID=""
+
+  return 0
+}
+
+# Extract messages after the given UUID for incremental updates.
+# Same format and filtering as extract_full_history, including exclusion
+# of the current user message.
+# Sets EXTRACT_LAST_UUID with the UUID of the last assistant message.
+enhance::extract_since_uuid() {
+  local session_file="$1"
+  local last_uuid="$2"
+  EXTRACT_LAST_UUID=""
+
+  [[ ! -f "$session_file" ]] && return 0
+  [[ -z "$last_uuid" ]] && {
+    enhance::extract_full_history "$session_file"
+    return 0
+  }
+
+  # Find the UUID of the last user entry (to exclude it)
+  local last_user_uuid
+  last_user_uuid=$(jq -r 'select(.type == "user") | .uuid' <"$session_file" 2>/dev/null | tail -1) || last_user_uuid=""
+
+  # Use awk to skip lines up to and including the last_uuid line, then jq on remainder
+  local remainder
+  remainder=$(awk -v uuid="$last_uuid" '
+    found { print; next }
+    /"uuid"\s*:\s*"/ && $0 ~ uuid { found = 1 }
+  ' "$session_file") || remainder=""
+
+  [[ -z "$remainder" ]] && return 0
+
+  # Extract formatted messages from the remainder, excluding current user message
+  local output
+  output=$(jq -r --arg exclude_uuid "$last_user_uuid" '
+    def extract_text:
+      if .type == "user" then
+        (.message.content | if type == "string" then . elif type == "array" then [.[] | select(.type=="text") | .text] | join(" ") else "" end)
+      else
+        (if (.message.content | type) == "array" then [.message.content[] | select(.type=="text") | .text] | join(" ") else "" end)
+      end;
+
+    select(
+      (.type == "user" or .type == "assistant")
+      and (.isSidechain // false) == false
+    )
+    | .uuid as $uuid
+    | select($uuid != $exclude_uuid)
+    | extract_text as $text
+    | select($text | length > 0)
+    | "\(.type | sub("assistant";"Assistant") | sub("user";"User")): \($text)"
+  ' <<<"$remainder" 2>/dev/null) || output=""
+
+  printf '%s\n' "$output"
+
+  # Find the last assistant UUID from the remainder
+  EXTRACT_LAST_UUID=$(jq -r --arg exclude_uuid "$last_user_uuid" '
+    select(
+      .type == "assistant"
+      and (.isSidechain // false) == false
+      and (.message.content | type) == "array"
+      and ([.message.content[] | select(.type=="text") | .text] | join("") | length) > 0
+      and .uuid != $exclude_uuid
+    )
+    | .uuid
+  ' <<<"$remainder" 2>/dev/null | tail -1) || EXTRACT_LAST_UUID=""
+
+  return 0
+}
+
+# Build prompt for full summarisation from extracted history.
+enhance::format_full_summary_input() {
+  local history_text="$1"
+  printf 'Summarise this conversation in 3-5 sentences. Focus on topic, technical context, user'"'"'s goal, and key decisions. Be concise.\n\n%s\n\nSummary:' "$history_text"
+}
+
+# Build prompt for incremental summarisation update.
+enhance::format_incremental_input() {
+  local summary="$1"
+  local new_exchange="$2"
+  printf 'Given this summary:\n%s\n\nUpdate it with this new exchange:\n%s\n\nProvide an updated summary in 3-5 sentences. Drop stale details if no longer relevant.\n\nUpdated summary:' "$summary" "$new_exchange"
+}
+
+# Main summarisation orchestrator.
+# Arguments:
+#   $1 - state_nameref: pipeline state associative array
+#   $2 - context_file: path to .context JSON state file
+#   $3 - incremental_model: model for incremental updates (e.g. correction_model)
+#   $4 - full_refresh_model: model for full refreshes (e.g. enhancement_model)
+# Sets CONTEXT_SUMMARY global for the enhancement stage.
+enhance::run_summarisation() {
+  local -n _su_st="$1"
+  local context_file="$2"
+  local incremental_model="$3"
+  local full_refresh_model="$4"
+
+  CONTEXT_SUMMARY=""
+  enhance::resolve_session_file
+  enhance::read_context_state "$context_file"
+
+  # First prompt — nothing to summarise yet
+  if [[ "${CONTEXT_COUNT:-0}" -eq 0 ]]; then
+    enhance::write_context_state "$context_file" "" 1 ""
+    _debug "summarisation: skipped (first prompt)"
+    return 0
+  fi
+
+  local model input_text new_uuid
+
+  if [[ "${CONTEXT_COUNT:-0}" -ge 10 ]] || [[ -z "${CONTEXT_LAST_UUID:-}" ]]; then
+    # Full refresh — read entire transcript
+    model="$full_refresh_model"
+    _debug "summarisation ($model): full refresh"
+    local history
+    history=$(enhance::extract_full_history "$SESSION_FILE") || history=""
+    new_uuid="${EXTRACT_LAST_UUID:-}"
+    input_text=$(enhance::format_full_summary_input "$history")
+  else
+    # Incremental — only new messages since last_uuid
+    model="$incremental_model"
+    _debug "summarisation ($model): incremental"
+    local new_exchange
+    new_exchange=$(enhance::extract_since_uuid "$SESSION_FILE" "$CONTEXT_LAST_UUID") || new_exchange=""
+    new_uuid="${EXTRACT_LAST_UUID:-}"
+    input_text=$(enhance::format_incremental_input "$CONTEXT_SUMMARY" "$new_exchange")
+  fi
+
+  local summary_json=""
+  summary_json=$(printf '%s' "$input_text" | BETTER_PROMPT_CHILD=1 claude -p \
+    --no-session-persistence --output-format json \
+    --agent better-prompt:prompt-summarisation --model "$model" 2>&1) || {
+    _warn "Summarisation stage failed: $summary_json"
+    _debug "summarisation ($model): failed"
+    CONTEXT_SUMMARY=""
+    return 0
+  }
+
+  _accumulate_cost _su_st "$summary_json"
+
+  local summary_result=""
+  if [[ -n "$summary_json" ]]; then
+    summary_result=$(jq -r '.result // empty' <<<"$summary_json" 2>/dev/null) || summary_result=""
+  fi
+
+  if [[ -n "$summary_result" ]]; then
+    CONTEXT_SUMMARY="$summary_result"
+    _debug "summarisation ($model): done"
+  else
+    CONTEXT_SUMMARY=""
+    _debug "summarisation ($model): empty result"
+  fi
+
+  enhance::write_context_state "$context_file" "${CONTEXT_SUMMARY}" "$((CONTEXT_COUNT + 1))" "${new_uuid:-$CONTEXT_LAST_UUID}"
   return 0
 }
 
@@ -276,17 +518,11 @@ enhance::run_enhancement_stage() {
   local -n _en_st="$1"
   local working_prompt="$2"
   local enhancement_model="$3"
-  local context_file="$4"
-  local context_count="$5"
-
-  local prior_context=""
-  prior_context=$(enhance::extract_prior_context "$context_file" "$context_count")
 
   local enhance_input=""
 
-  if [[ -n "$prior_context" ]]; then
-    enhance_input+="Prior prompts in this session:
-$prior_context
+  if [[ -n "${CONTEXT_SUMMARY:-}" ]]; then
+    enhance_input+="Conversation context: ${CONTEXT_SUMMARY}
 
 "
   fi
@@ -631,7 +867,9 @@ enhance::run_pipeline() {
 
   _pl_st[ENHANCED_PROMPT]="${_pl_st[WORKING_PROMPT]}"
   if [[ "$enhancement" == "true" ]]; then
-    _pl_st[ENHANCED_PROMPT]=$(enhance::run_enhancement_stage "$1" "${_pl_st[WORKING_PROMPT]}" "$enhancement_model" "$CONTEXT_FILE" 5)
+    # Context summarisation — only runs with enhancement
+    enhance::run_summarisation "$1" "$CONTEXT_FILE" "$correction_model" "$enhancement_model"
+    _pl_st[ENHANCED_PROMPT]=$(enhance::run_enhancement_stage "$1" "${_pl_st[WORKING_PROMPT]}" "$enhancement_model")
   fi
   return 0
 }
@@ -642,8 +880,6 @@ enhance::finalize() {
   local session_id="$3"
 
   local final_prompt="${_fn_st[ENHANCED_PROMPT]:-${_fn_st[WORKING_PROMPT]}}"
-
-  enhance::append_prior_context "$CONTEXT_FILE" 5 "$final_prompt"
 
   if [[ "$AUDIT" == "true" ]] && command -v jq &>/dev/null; then
     enhance::write_audit "$AUDIT_LOG" "$original_prompt" "${_fn_st[CORRECTED_PROMPT]}" "$final_prompt" \
