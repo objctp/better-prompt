@@ -1,15 +1,30 @@
-import type { Plugin } from "@opencode-ai/plugin";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir } from "node:os";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import type { Plugin } from "@opencode-ai/plugin";
+import type { Event, Part } from "@opencode-ai/sdk";
+import {
+  type Config,
+  CONFIG_DEFAULTS,
+  CONFIG_PATH,
+  parseConfig,
+  resolveModel,
+  // deno-lint-ignore no-sloppy-imports
+} from "./better-prompt-models.js";
 
-// ── Types ──────────────────────────────────────────────────
+interface WatchedEventProperties {
+  sessionID?: string;
+  error?: unknown;
+  status?: string;
+  part?: { type?: string; title?: string; tool?: string };
+  [key: string]: unknown;
+}
+
+interface WatchedEvent {
+  type: string;
+  properties?: WatchedEventProperties;
+}
+
+// :::: Types :::: /////////////////////////////////////////////
 
 interface Usage {
   cost: number;
@@ -17,18 +32,6 @@ interface Usage {
   outputTokens: number;
   cacheWriteTokens: number;
   cacheReadTokens: number;
-}
-
-interface Config {
-  enabled: boolean;
-  correction: boolean;
-  correction_model: string;
-  translation: boolean;
-  translation_model: string;
-  enhancement: boolean;
-  enhancement_model: string;
-  audit: boolean;
-  verbose: boolean;
 }
 
 interface PipelineResult {
@@ -51,18 +54,6 @@ interface SessionContext {
   messageCount: number;
 }
 
-const CONFIG_DEFAULTS: Config = {
-  enabled: true,
-  correction: true,
-  correction_model: "haiku",
-  translation: false,
-  translation_model: "haiku",
-  enhancement: false,
-  enhancement_model: "sonnet",
-  audit: true,
-  verbose: false,
-};
-
 const SUB_AGENTS = new Set([
   "prompt-correction",
   "prompt-translation",
@@ -72,359 +63,7 @@ const SUB_AGENTS = new Set([
 
 const FULL_REFRESH_THRESHOLD = 10;
 
-// ── Model resolution ──────────────────────────────────────
-// Agents inherit the session's current model by default.
-// When a user sets a model in better-prompt.local.md, resolveModel()
-// maps it to a { providerID, modelID } pair that opencode can use.
-//
-// Resolution order:
-//   1. provider/model format (e.g. "opencode-go/deepseek-v4-flash") → used directly
-//   2. Short-name aliases ("fast", "capable", "powerful") → resolved
-//      dynamically from the user's connected providers via auth.json,
-//      environment variables, config, and the models.dev catalogue
-//   3. Legacy names ("haiku", "sonnet", "opus") → mapped to short-name
-//      aliases for backward compatibility
-//
-// The catalogue is fetched once from models.dev and cached locally for
-// 24 hours. Provider discovery mirrors opencode's own logic:
-// auth.json keys + env vars from catalogue + custom provider config,
-// minus disabled_providers, intersected with enabled_providers.
-
-type ModelRef = { providerID: string; modelID: string };
-
-interface CatalogModel {
-  id: string;
-  name?: string;
-  tool_call?: boolean;
-  limit?: { context?: number; output?: number };
-  cost?: { input?: number; output?: number };
-}
-
-interface CatalogProvider {
-  id: string;
-  name?: string;
-  env?: string[];
-  models?: Record<string, CatalogModel>;
-}
-
-type Catalog = Record<string, CatalogProvider>;
-
-const CATALOG_CACHE_PATH = join(
-  homedir(),
-  ".cache",
-  "opencode",
-  "models-dev.json",
-);
-
-const CATALOG_STALE_MS = 24 * 60 * 60 * 1000;
-
-let _catalog: Catalog | null = null;
-
-async function loadCatalog(): Promise<Catalog> {
-  if (_catalog) return _catalog;
-
-  const fs = await import("node:fs");
-  const famt = fs.promises;
-
-  const isStale = (mtime: number): boolean =>
-    Date.now() - mtime > CATALOG_STALE_MS;
-
-  try {
-    const stat = await famt.stat(CATALOG_CACHE_PATH);
-    if (!isStale(stat.mtimeMs)) {
-      const raw = await famt.readFile(CATALOG_CACHE_PATH, "utf-8");
-      _catalog = JSON.parse(raw) as Catalog;
-      return _catalog;
-    }
-  } catch {}
-
-  try {
-    const res = await fetch("https://models.dev/api.json");
-    const data: Catalog = await res.json();
-    _catalog = data;
-    await famt.mkdir(join(CATALOG_CACHE_PATH, ".."), { recursive: true });
-    await famt.writeFile(CATALOG_CACHE_PATH, JSON.stringify(data));
-    return data;
-  } catch {
-    try {
-      const raw = await famt.readFile(CATALOG_CACHE_PATH, "utf-8");
-      _catalog = JSON.parse(raw) as Catalog;
-      return _catalog;
-    } catch {
-      return {};
-    }
-  }
-}
-
-interface OpenCodeConfig {
-  disabled_providers?: string[];
-  enabled_providers?: string[];
-  provider?: Record<string, { models?: Record<string, unknown> }>;
-  [key: string]: unknown;
-}
-
-function deepMerge<T extends Record<string, unknown>>(a: T, b: Partial<T>): T {
-  const result = { ...a };
-  for (const key of Object.keys(b) as (keyof T)[]) {
-    const bVal = b[key];
-    const aVal = a[key];
-    if (
-      bVal &&
-      typeof bVal === "object" &&
-      !Array.isArray(bVal) &&
-      aVal &&
-      typeof aVal === "object" &&
-      !Array.isArray(aVal)
-    ) {
-      (result as Record<string, unknown>)[key as string] = deepMerge(
-        aVal as Record<string, unknown>,
-        bVal as Record<string, unknown>,
-      );
-    } else {
-      (result as Record<string, unknown>)[key as string] = bVal;
-    }
-  }
-  return result;
-}
-
-async function getConnectedProviders(): Promise<Set<string>> {
-  const catalog = await loadCatalog();
-  const connected = new Set<string>();
-
-  // 1. Auth.json credentials
-  try {
-    const authPath = join(
-      homedir(),
-      ".local",
-      "share",
-      "opencode",
-      "auth.json",
-    );
-    const raw = readFileSync(authPath, "utf-8");
-    const auth = JSON.parse(raw);
-    for (const key of Object.keys(auth)) connected.add(key);
-  } catch {}
-
-  // 2. Environment variables listed in catalogue
-  for (const [pid, pdata] of Object.entries(catalog)) {
-    for (const envVar of pdata.env ?? []) {
-      if (process.env[envVar]) connected.add(pid);
-    }
-  }
-
-  // 3. Custom providers from opencode config
-  const cfg = loadMergedConfig();
-  for (const p of Object.keys(cfg.provider ?? {})) connected.add(p);
-
-  // 4. Apply disabled_providers
-  for (const d of cfg.disabled_providers ?? []) connected.delete(d);
-
-  // 5. Apply enabled_providers whitelist
-  if (cfg.enabled_providers) {
-    const wl = new Set(cfg.enabled_providers);
-    for (const p of connected) {
-      if (!wl.has(p)) connected.delete(p);
-    }
-  }
-
-  return connected;
-}
-
-function loadMergedConfig(): OpenCodeConfig {
-  const load = (p: string): OpenCodeConfig => {
-    try {
-      return JSON.parse(readFileSync(p, "utf-8"));
-    } catch {
-      return {};
-    }
-  };
-  const globalCfg = load(
-    join(homedir(), ".config", "opencode", "opencode.json"),
-  );
-  const projCfg = load("opencode.json");
-  return deepMerge(globalCfg, projCfg);
-}
-
-interface ModelCandidate {
-  id: string;
-  context: number;
-  cost: number;
-  toolCall: boolean;
-}
-
-function partitionByRole(models: ModelCandidate[]): {
-  fast: ModelCandidate | null;
-  capable: ModelCandidate | null;
-  powerful: ModelCandidate | null;
-} {
-  const withTools = models.filter((m) => m.toolCall);
-  const pool = withTools.length > 0 ? withTools : models;
-  const byCost = [...pool].sort((a, b) => a.cost - b.cost);
-  const byCtx = [...pool].sort((a, b) => b.context - a.context);
-
-  const fast = byCost[0] || null;
-  const powerful = byCtx[0] || null;
-  const capable = byCost.length > 2
-    ? byCost[Math.floor(byCost.length / 2)]
-    : byCost[1] || fast;
-  return { fast, capable, powerful };
-}
-
-async function resolveShortName(
-  shortName: string,
-): Promise<ModelRef | undefined> {
-  const connected = await getConnectedProviders();
-  const catalog = await loadCatalog();
-  const cfg = loadMergedConfig();
-
-  const allModels: ModelCandidate[] = [];
-
-  for (const pid of connected) {
-    const catModels = catalog[pid]?.models ?? {};
-    const customModels =
-      (cfg.provider as Record<string, Record<string, unknown>>)?.[pid]
-        ?.models ?? {};
-    const merged = { ...catModels, ...customModels };
-
-    for (const [mid, m] of Object.entries(merged)) {
-      const model = m as CatalogModel;
-      allModels.push({
-        id: `${pid}/${mid}`,
-        context: model?.limit?.context ?? 0,
-        cost: (model?.cost?.input ?? 0) + (model?.cost?.output ?? 0),
-        toolCall: model?.tool_call ?? false,
-      });
-    }
-  }
-
-  const { fast, capable, powerful } = partitionByRole(allModels);
-
-  const ALIASES: Record<string, ModelRef | null> = {
-    fast: fast
-      ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] }
-      : null,
-    capable: capable
-      ? {
-        providerID: capable.id.split("/")[0],
-        modelID: capable.id.split("/")[1],
-      }
-      : null,
-    powerful: powerful
-      ? {
-        providerID: powerful.id.split("/")[0],
-        modelID: powerful.id.split("/")[1],
-      }
-      : null,
-    haiku: fast
-      ? { providerID: fast.id.split("/")[0], modelID: fast.id.split("/")[1] }
-      : null,
-    sonnet: capable
-      ? {
-        providerID: capable.id.split("/")[0],
-        modelID: capable.id.split("/")[1],
-      }
-      : null,
-    opus: powerful
-      ? {
-        providerID: powerful.id.split("/")[0],
-        modelID: powerful.id.split("/")[1],
-      }
-      : null,
-  };
-
-  return ALIASES[shortName] ?? undefined;
-}
-
-function resolveModel(
-  shortName: string,
-  defaultName: string,
-): Promise<ModelRef | undefined> {
-  if (shortName === defaultName) return Promise.resolve(undefined);
-
-  const slashIdx = shortName.indexOf("/");
-  if (slashIdx > 0) {
-    return Promise.resolve({
-      providerID: shortName.slice(0, slashIdx),
-      modelID: shortName.slice(slashIdx + 1),
-    });
-  }
-
-  return resolveShortName(shortName);
-}
-
-// ── Config parsing ─────────────────────────────────────────
-
-function parseConfig(configPath: string): Config {
-  if (!existsSync(configPath)) return { ...CONFIG_DEFAULTS };
-
-  const raw = readFileSync(configPath, "utf8");
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return { ...CONFIG_DEFAULTS };
-
-  const fm = fmMatch[1];
-  const get = (key: string): string | undefined => {
-    const m = fm.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-    return m ? m[1].trim() : undefined;
-  };
-
-  const bool = (key: string, fallback: boolean): boolean => {
-    const v = get(key);
-    return v !== undefined ? v === "true" : fallback;
-  };
-
-  const str = (key: string, fallback: string): string => {
-    const v = get(key);
-    return v !== undefined ? v : fallback;
-  };
-
-  return {
-    enabled: bool("enabled", CONFIG_DEFAULTS.enabled),
-    correction: bool("correction", CONFIG_DEFAULTS.correction),
-    correction_model: str("correction_model", CONFIG_DEFAULTS.correction_model),
-    translation: bool("translation", CONFIG_DEFAULTS.translation),
-    translation_model: str(
-      "translation_model",
-      CONFIG_DEFAULTS.translation_model,
-    ),
-    enhancement: bool("enhancement", CONFIG_DEFAULTS.enhancement),
-    enhancement_model: str(
-      "enhancement_model",
-      CONFIG_DEFAULTS.enhancement_model,
-    ),
-    audit: bool("audit", CONFIG_DEFAULTS.audit),
-    verbose: bool("verbose", CONFIG_DEFAULTS.verbose),
-  };
-}
-
-function updateConfig(configPath: string, updates: Partial<Config>): void {
-  let raw = "";
-  if (existsSync(configPath)) {
-    raw = readFileSync(configPath, "utf8");
-  }
-
-  let fm = "";
-  let body = "";
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (fmMatch) {
-    fm = fmMatch[1];
-    body = fmMatch[2];
-  }
-
-  for (const [key, value] of Object.entries(updates)) {
-    if (value === undefined) continue;
-    const line = `${key}: ${value}`;
-    const regex = new RegExp(`^${key}: .+$`, "m");
-    if (regex.test(fm)) {
-      fm = fm.replace(regex, line);
-    } else {
-      fm += `\n${line}`;
-    }
-  }
-
-  writeFileSync(configPath, `---\n${fm}\n---\n${body}`);
-}
-
-// ── Audit ──────────────────────────────────────────────────
+// :::: Audit :::: /////////////////////////////////////////////
 
 interface AuditEntry {
   date: string;
@@ -445,25 +84,20 @@ interface AuditEntry {
 
 function writeAudit(auditPath: string, entry: AuditEntry): void {
   mkdirSync(join(auditPath, ".."), { recursive: true });
-  appendFileSync(auditPath, JSON.stringify(entry) + "\n");
+  appendFileSync(auditPath, `${JSON.stringify(entry)}\n`);
 }
 
-// ── Plugin ─────────────────────────────────────────────────
+// :::: Plugin :::: ////////////////////////////////////////////
 
+// deno-lint-ignore require-await
 export const BetterPromptPlugin: Plugin = async (ctx) => {
   const { client, directory } = ctx;
 
-  const CONFIG_PATH = join(
-    process.env.HOME || "~",
-    ".config",
-    "opencode",
-    "better-prompt.local.md",
-  );
   const AUDIT_DIR = join(directory, ".opencode", "better-prompt");
   const AUDIT_PATH = join(AUDIT_DIR, "audit.json");
   const DEBUG_PATH = join(AUDIT_DIR, "debug.log");
 
-  // ── Debug logging ──────────────────────────────────────
+  // :::: Debug logging :::: /////////////////////////////////
 
   function debugLog(message: string, error?: unknown): void {
     try {
@@ -476,7 +110,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         : "";
       appendFileSync(
         DEBUG_PATH,
-        `[${ts}] ${message}${errStr ? " — " + errStr : ""}\n`,
+        `[${ts}] ${message}${errStr ? ` — ${errStr}` : ""}\n`,
       );
     } catch {
       // best effort
@@ -506,7 +140,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     try {
       const eventStream = await client.event.subscribe();
       for await (const event of eventStream.stream) {
-        const e = event as any;
+        const e = event as unknown as WatchedEvent;
         const sid = e.properties?.sessionID;
         if (sid !== childSessionID) continue;
 
@@ -531,7 +165,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
           const part = e.properties?.part;
           if (part?.type === "tool") {
             debugLog(
-              `[${label}] tool: ${part.title || part.tool?.name || "unknown"}`,
+              `[${label}] tool: ${part.title || part.tool || "unknown"}`,
             );
           }
         }
@@ -544,12 +178,11 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
   // In-memory session context: sessionID → summarised conversation context
   const sessionContexts = new Map<string, SessionContext>();
 
-  // ── Agent invocation ───────────────────────────────────
+  // :::: Agent invocation :::: //////////////////////////////
 
   async function invokeAgent(
     agent: string,
     text: string,
-    sessionID: string,
     config: Config,
     model?: { providerID: string; modelID: string },
   ): Promise<{ text: string; usage: Usage }> {
@@ -595,14 +228,24 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         };
       }
 
-      const textPart = result.parts.find((p: any) =>
-        p.type === "text" && p.text
+      const textPart = result.parts.find((p: Part) =>
+        p.type === "text" && "text" in p
       );
       const resultText = textPart && "text" in textPart
-        ? (textPart as any).text
+        ? (textPart as { text: string }).text
         : text;
 
-      const info = (result as any).info;
+      interface PromptInfo {
+        cost?: number;
+        tokens?: {
+          input?: number;
+          output?: number;
+          cache?: { write?: number; read?: number };
+        };
+      }
+      const info = (result as Record<string, unknown>).info as
+        | PromptInfo
+        | undefined;
       const usage: Usage = {
         cost: info?.cost ?? 0,
         inputTokens: info?.tokens?.input ?? 0,
@@ -628,7 +271,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     }
   }
 
-  // ── Context summarisation ──────────────────────────────────
+  // :::: Context summarisation :::: /////////////////////////////
 
   function formatFullSummaryInput(
     userMessages: string[],
@@ -661,12 +304,16 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     return input;
   }
 
-  function extractTextFromParts(parts: any[]): string {
+  function extractTextFromParts(parts: unknown[]): string {
     if (!parts || !Array.isArray(parts)) return "";
     const texts: string[] = [];
     for (const p of parts) {
-      if (p?.type === "text" && typeof p.text === "string" && p.text.trim()) {
-        texts.push(p.text.trim());
+      const part = p as Record<string, unknown>;
+      if (
+        part?.type === "text" && typeof part.text === "string" &&
+        part.text.trim()
+      ) {
+        texts.push(part.text.trim());
       }
     }
     return texts.join("\n");
@@ -676,14 +323,12 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     sessionID: string,
     currentMessageID: string,
     config: Config,
-  ): Promise<
-    {
-      summary: string;
-      lastMessageID: string;
-      messageCount: number;
-      usage: Usage;
-    }
-  > {
+  ): Promise<{
+    summary: string;
+    lastMessageID: string;
+    messageCount: number;
+    usage: Usage;
+  }> {
     const existing = sessionContexts.get(sessionID);
     const zeroUsage: Usage = {
       cost: 0,
@@ -693,7 +338,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       cacheReadTokens: 0,
     };
 
-    // First prompt short circuit: nothing to summarise yet
     if (!existing || existing.messageCount === 0) {
       debugLog("summarisation: skipped (first prompt)");
       return {
@@ -704,7 +348,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       };
     }
 
-    let messages: any[];
+    let messages: Record<string, unknown>[];
     try {
       const result = await client.session.messages({ path: { id: sessionID } });
       messages = Array.isArray(result) ? result : [];
@@ -723,16 +367,14 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     let latestMessageID = existing?.lastMessageID ?? "";
 
     for (const msg of messages) {
-      const info = msg?.info;
+      const info = (msg?.info ?? {}) as Record<string, unknown>;
       if (!info?.id) continue;
 
-      // Exclude the current message being processed
       if (currentMessageID && info.id === currentMessageID) continue;
 
-      // Exclude sub-agent messages
-      if (info.agent && SUB_AGENTS.has(info.agent)) continue;
+      if (info.agent && SUB_AGENTS.has(info.agent as string)) continue;
 
-      const text = extractTextFromParts(msg?.parts);
+      const text = extractTextFromParts(msg?.parts as unknown[]);
       if (!text) continue;
 
       if (info.role === "user") {
@@ -741,7 +383,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         lastAssistantText = text;
       }
 
-      latestMessageID = info.id;
+      latestMessageID = info.id as string;
     }
 
     if (userMessages.length === 0 && !lastAssistantText) {
@@ -761,7 +403,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     let summarisationUsage: Usage = { ...zeroUsage };
 
     if (needFullRefresh) {
-      // Full refresh uses enhancement_model (stronger reasoning for full history)
       const model = await resolveModel(
         config.enhancement_model,
         CONFIG_DEFAULTS.enhancement_model,
@@ -772,7 +413,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       const fullResult = await invokeAgent(
         "prompt-summarisation",
         input,
-        sessionID,
         config,
         model,
       );
@@ -780,7 +420,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       summarisationUsage = fullResult.usage;
       debugLog(`summarisation (full refresh): took ${Date.now() - t0}ms`);
     } else {
-      // Incremental uses correction_model (cheaper, small input)
       const model = await resolveModel(
         config.correction_model,
         CONFIG_DEFAULTS.correction_model,
@@ -796,7 +435,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       const incrResult = await invokeAgent(
         "prompt-summarisation",
         input,
-        sessionID,
         config,
         model,
       );
@@ -805,7 +443,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       debugLog(`summarisation (incremental): took ${Date.now() - t0}ms`);
     }
 
-    if (!summary || !summary.trim()) {
+    if (!summary?.trim()) {
       debugLog("summarisation: agent returned empty, keeping existing summary");
       summary = existing?.summary ?? "";
     }
@@ -818,7 +456,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     };
   }
 
-  // ── Pipeline ───────────────────────────────────────────
+  // :::: Pipeline :::: //////////////////////////////////////
 
   async function runPipeline(
     text: string,
@@ -873,7 +511,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     const skipCorrection = enhancement && !translation && correction;
     const correctionOnlyForLanguage = translation && !correction;
 
-    // ── Correction ──
+    // :::: Correction //
     if (!skipCorrection && (correction || correctionOnlyForLanguage)) {
       notify("correction", "starting");
       const t0 = Date.now();
@@ -886,7 +524,6 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       const correctionResult = await invokeAgent(
         "prompt-correction",
         working,
-        sessionID,
         config,
         model,
       );
@@ -933,7 +570,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       notify("correction", "skipped");
     }
 
-    // ── Translation ──
+    // :::: Translation //
     if (translation) {
       if (detectedLanguage === "en") {
         notify("translation", "skipped");
@@ -946,12 +583,11 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         const translationResult = await invokeAgent(
           "prompt-translation",
           working,
-          sessionID,
           config,
           model,
         );
         addUsage(translationResult.usage);
-        if (translationResult.text && translationResult.text.trim()) {
+        if (translationResult.text?.trim()) {
           working = translationResult.text;
         }
         notify("translation", "complete");
@@ -960,7 +596,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       notify("translation", "skipped");
     }
 
-    // ── Context summarisation (only with enhancement) ──
+    // :::: Context summarisation (only with enhancement) //
     let contextSummary = "";
     if (enhancement) {
       notify("context", "starting");
@@ -975,7 +611,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       notify("context", "complete");
     }
 
-    // ── Enhancement ──
+    // :::: Enhancement //
     if (enhancement) {
       notify("enhancement", "starting");
       let enhanceInput = "";
@@ -991,12 +627,11 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
       const enhancementResult = await invokeAgent(
         "prompt-enhancement",
         enhanceInput,
-        sessionID,
         config,
         model,
       );
       addUsage(enhancementResult.usage);
-      if (enhancementResult.text && enhancementResult.text.trim()) {
+      if (enhancementResult.text?.trim()) {
         working = enhancementResult.text;
       }
       notify("enhancement", "complete");
@@ -1014,29 +649,35 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
     };
   }
 
-  // ── Hooks ──────────────────────────────────────────────
+  // :::: Hooks :::: /////////////////////////////////////////
 
   return {
     // Clean up in-memory context when session ends
-    event: async ({ event }: { event: any }) => {
+    // deno-lint-ignore require-await
+    event: async ({ event }: { event: Event }) => {
       if (event.type === "session.deleted") {
-        const sid = event.properties?.sessionID ?? event.properties?.info?.id;
+        const props = event.properties as Record<string, unknown> | undefined;
+        const sid = (props?.sessionID ??
+          (props?.info as Record<string, unknown> | undefined)?.id) as
+            | string
+            | undefined;
         if (sid) sessionContexts.delete(sid);
       }
     },
 
-    // Primary pipeline — intercept user messages only
-    "chat.message": async (input: any, output: any) => {
+    "chat.message": async (
+      input: { sessionID: string; agent?: string; messageID?: string },
+      output: { parts: Part[] },
+    ) => {
       if (input.agent && SUB_AGENTS.has(input.agent)) return;
 
-      // Extract text from parts
-      const textPart = output.parts?.find((p: any) =>
-        p.type === "text" && p.text
+      const textPart = output.parts?.find((p: Part) =>
+        p.type === "text" && "text" in p
       );
       if (!textPart || !("text" in textPart)) return;
 
       const originalText = textPart.text;
-      if (!originalText || !originalText.trim()) return;
+      if (!originalText?.trim()) return;
 
       const config = parseConfig(CONFIG_PATH);
       if (!config.enabled) return;
@@ -1118,8 +759,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         writeAudit(AUDIT_PATH, entry);
       }
 
-      // Verbose output — write to debug log (cannot push new parts
-      // without messageID, causes SchemaError in OpenCode >=1.16)
+      // Verbose output
       if (config.verbose) {
         const lines: string[] = [
           `[better-prompt] ${changed ? "prompt modified" : "no changes"}`,
@@ -1129,7 +769,7 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
           const trunc = (
             s: string,
             n = 120,
-          ) => (s.length > n ? s.slice(0, n) + "..." : s);
+          ) => (s.length > n ? `${s.slice(0, n)}...` : s);
           lines.push(`Original:  "${trunc(originalText)}"`);
           lines.push(`Processed: "${trunc(result)}"`);
         }
@@ -1160,7 +800,9 @@ export const BetterPromptPlugin: Plugin = async (ctx) => {
         if (usage.cost > 0) {
           lines.push(
             `Cost: $${
-              usage.cost.toFixed(6)
+              usage.cost.toFixed(
+                6,
+              )
             } | Tokens: ${usage.inputTokens}in ${usage.outputTokens}out (${usage.cacheWriteTokens}cw ${usage.cacheReadTokens}cr)`,
           );
         }

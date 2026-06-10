@@ -71,7 +71,14 @@ enhancement_model: opencode-go/deepseek-v4-pro
 
 When the value matches the default, the agent inherits the session's current model (no override is sent).
 
-## Notes
+## Model Selection (OpenCode TUI)
+
+In the config view (`/better-prompt:config`):
+
+- **Enter** on a model field — cycle tier: fast → capable → powerful → fast
+- **Space** on a model field — cycle individual models within the current tier (sorted by cost)
+- **Enter** on a boolean field — toggle on/off
+- **Esc** — close config
 
 - Changes take effect immediately
 - Punctuation corrections are applied but NOT classified as mistakes

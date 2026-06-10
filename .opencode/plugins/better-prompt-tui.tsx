@@ -1,113 +1,29 @@
 /** @jsxImportSource @opentui/solid */
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { useKeyboard } from "@opentui/solid";
 import { createSignal } from "solid-js";
-import { createTextAttributes } from "@opentui/core";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  CONFIG_PATH,
+  type Config,
+  findModelEntry,
+  formatContext,
+  formatCost,
+  getModelTiers,
+  MODEL_DEFAULTS,
+  MODEL_FIELDS,
+  type ModelEntry,
+  parseConfig,
+  resolveTier,
+  TIER_ALIASES,
+  TIER_CYCLE,
+  updateConfig,
+  // deno-lint-ignore no-sloppy-imports
+} from "./better-prompt-models.js";
 
-// ── Types ──────────────────────────────────────────────────
-
-interface Config {
-  enabled: boolean;
-  correction: boolean;
-  correction_model: string;
-  translation: boolean;
-  translation_model: string;
-  enhancement: boolean;
-  enhancement_model: string;
-  audit: boolean;
-  verbose: boolean;
-}
-
-const CONFIG_DEFAULTS: Config = {
-  enabled: true,
-  correction: true,
-  correction_model: "haiku",
-  translation: false,
-  translation_model: "haiku",
-  enhancement: false,
-  enhancement_model: "sonnet",
-  audit: true,
-  verbose: false,
-};
-
-const TOGGLEABLE = [
-  "enabled",
-  "correction",
-  "translation",
-  "enhancement",
-  "audit",
-  "verbose",
-] as const;
-
-// ── Config parsing (duplicated from server plugin) ─────────
-
-function parseConfig(configPath: string): Config {
-  if (!existsSync(configPath)) return { ...CONFIG_DEFAULTS };
-
-  const raw = readFileSync(configPath, "utf8");
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return { ...CONFIG_DEFAULTS };
-
-  const fm = fmMatch[1];
-  const get = (key: string): string | undefined => {
-    const m = fm.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-    return m ? m[1].trim() : undefined;
-  };
-
-  const bool = (key: string, fallback: boolean): boolean => {
-    const v = get(key);
-    return v !== undefined ? v === "true" : fallback;
-  };
-
-  const str = (key: string, fallback: string): string => {
-    const v = get(key);
-    return v !== undefined ? v : fallback;
-  };
-
-  return {
-    enabled: bool("enabled", CONFIG_DEFAULTS.enabled),
-    correction: bool("correction", CONFIG_DEFAULTS.correction),
-    correction_model: str("correction_model", CONFIG_DEFAULTS.correction_model),
-    translation: bool("translation", CONFIG_DEFAULTS.translation),
-    translation_model: str("translation_model", CONFIG_DEFAULTS.translation_model),
-    enhancement: bool("enhancement", CONFIG_DEFAULTS.enhancement),
-    enhancement_model: str("enhancement_model", CONFIG_DEFAULTS.enhancement_model),
-    audit: bool("audit", CONFIG_DEFAULTS.audit),
-    verbose: bool("verbose", CONFIG_DEFAULTS.verbose),
-  };
-}
-
-function updateConfig(configPath: string, updates: Partial<Config>): void {
-  let raw = "";
-  if (existsSync(configPath)) {
-    raw = readFileSync(configPath, "utf8");
-  }
-
-  let fm = "";
-  let body = "";
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (fmMatch) {
-    fm = fmMatch[1];
-    body = fmMatch[2];
-  }
-
-  for (const [key, value] of Object.entries(updates)) {
-    if (value === undefined) continue;
-    const line = `${key}: ${value}`;
-    const regex = new RegExp(`^${key}: .+$`, "m");
-    if (regex.test(fm)) {
-      fm = fm.replace(regex, line);
-    } else {
-      fm += `\n${line}`;
-    }
-  }
-
-  writeFileSync(configPath, `---\n${fm}\n---\n${body}`);
-}
-
-// ── Types ──────────────────────────────────────────────────
+// :::: Types :::: ///////////////////////////////////////////
 
 interface SelectOption {
   title: string;
@@ -115,19 +31,18 @@ interface SelectOption {
   value: string;
 }
 
-// ── Reusable SelectView component ──────────────────────────
-// Renders at route level (not inside dialog) so useKeyboard
-// receives all key events including Enter and Escape.
+// :::: Reusable SelectView component :::: ///////////////////
 
 function SelectView(props: {
   title: string;
   options: () => SelectOption[];
   onSelect: (opt: SelectOption) => void;
+  onAltSelect?: (opt: SelectOption) => void;
   onBack: () => void;
 }) {
   const [idx, setIdx] = createSignal(0);
 
-  useKeyboard((key: any) => {
+  useKeyboard((key: { name: string }) => {
     const opts = props.options();
     const max = opts.length - 1;
     if (key.name === "up" || key.name === "k") {
@@ -140,6 +55,12 @@ function SelectView(props: {
       const opt = opts[idx()];
       if (opt) props.onSelect(opt);
     }
+    if (key.name === "space") {
+      if (props.onAltSelect) {
+        const opt = opts[idx()];
+        if (opt) props.onAltSelect(opt);
+      }
+    }
     if (key.name === "escape") {
       props.onBack();
     }
@@ -147,52 +68,98 @@ function SelectView(props: {
 
   return (
     <box border paddingTop={0} paddingBottom={0} paddingLeft={1} paddingRight={1}>
-      <text attributes={createTextAttributes({ bold: true })}>{props.title}</text>
+      <text>
+        <strong>{props.title}</strong>
+      </text>
       {props.options().map((opt: SelectOption, i: number) => (
         <text fg={idx() === i ? "#ffffff" : "#888888"}>
-          {(idx() === i ? "> " : "  ") + opt.title + "  " + opt.description}
+          {`${idx() === i ? "> " : "  "}${opt.title}  ${opt.description}`}
         </text>
       ))}
-      <text fg="#555555"> Up/Dn Navigate Enter Select Esc Back</text>
+      <text fg="#555555">Up/Dn Navigate Enter Cycle Tier Space Pick Model Esc Back</text>
     </box>
   );
 }
 
-// ── TUI Plugin ─────────────────────────────────────────────
+// :::: Model display formatting :::: ////////////////////////
 
+function formatModelDisplay(
+  value: string,
+  tiers: { fast: ModelEntry[]; capable: ModelEntry[]; powerful: ModelEntry[] } | null,
+  key: string,
+): string {
+  const isDefault = value === MODEL_DEFAULTS[key];
+  if (isDefault) return `${value} (inherits session model)`;
+
+  // Legacy alias: haiku → fast, sonnet → capable, opus → powerful
+  const alias = TIER_ALIASES[value];
+  if (alias) {
+    if (!tiers) return `${value} ≡ ${alias}`;
+    const tierModels = tiers[alias as "fast" | "capable" | "powerful"];
+    const best = tierModels?.[0];
+    return `${value} ≡ ${alias} ${
+      best ? `(${best.id}  ${formatCost(best.cost)}  ctx:${formatContext(best.context)})` : ""
+    }`;
+  }
+
+  // Tier name: fast/capable/powerful
+  if (TIER_CYCLE.includes(value)) {
+    if (!tiers) return value;
+    const tierModels = tiers[value as "fast" | "capable" | "powerful"];
+    const best = tierModels?.[0];
+    return `${value} ${
+      best ? `(${best.id}  ${formatCost(best.cost)}  ctx:${formatContext(best.context)})` : ""
+    }`;
+  }
+
+  // Explicit provider/model
+  if (tiers) {
+    const entry = findModelEntry(value, tiers);
+    if (entry) {
+      return `${value} (${entry.tier}  ${formatCost(entry.cost)}  ctx:${formatContext(
+        entry.context,
+      )})`;
+    }
+  }
+  return value;
+}
+
+// :::: TUI Plugin :::: //////////////////////////////////////
+
+// deno-lint-ignore require-await
 const tui: TuiPlugin = async (api) => {
-  const CONFIG_PATH = join(
-    process.env.HOME || "~",
-    ".config",
-    "opencode",
-    "better-prompt.local.md",
-  );
-
   function getAuditPath(): string {
     return join(api.state.path.directory, ".opencode", "better-prompt", "audit.json");
   }
 
   // Track previous route so we can navigate back
-  let prevRoute: { name: string; params?: Record<string, unknown> } = { name: "home" };
+  let prevRoute: { name: string; params?: Record<string, unknown> } = {
+    name: "home",
+  };
 
   function goBack() {
     api.route.navigate(prevRoute.name, prevRoute.params);
   }
 
-  // ── /better-prompt:toggle ────────────────────────────────
+  // :::: /better-prompt:toggle :::: /////////////////////////
 
   function handleToggle() {
-    prevRoute = { name: api.route.current.name, params: (api.route.current as any).params };
+    prevRoute = {
+      name: api.route.current.name,
+      params: (api.route.current as Record<string, unknown>).params as
+        | Record<string, unknown>
+        | undefined,
+    };
     api.route.navigate("better-prompt:toggle");
   }
 
   function ToggleRoute() {
     const [stages, setStages] = createSignal(
-      TOGGLEABLE.map((stage) => {
+      ["enabled", "correction", "translation", "enhancement", "audit", "verbose"].map((stage) => {
         const config = parseConfig(CONFIG_PATH);
         return {
           title: stage,
-          description: `Currently: ${(config as any)[stage] ? "ON" : "OFF"}`,
+          description: `Currently: ${(config as unknown as Record<string, unknown>)[stage] ? "ON" : "OFF"}`,
           value: stage,
         };
       }),
@@ -204,7 +171,7 @@ const tui: TuiPlugin = async (api) => {
         options={() => stages()}
         onSelect={(opt) => {
           const current = parseConfig(CONFIG_PATH);
-          const newVal = !(current as any)[opt.value];
+          const newVal = !(current as unknown as Record<string, unknown>)[opt.value];
           updateConfig(CONFIG_PATH, { [opt.value]: newVal });
           api.ui.toast({
             variant: "success",
@@ -212,14 +179,16 @@ const tui: TuiPlugin = async (api) => {
           });
           // Update displayed state — stay open for more toggles
           setStages(
-            TOGGLEABLE.map((stage) => {
-              const cfg = parseConfig(CONFIG_PATH);
-              return {
-                title: stage,
-                description: `Currently: ${(cfg as any)[stage] ? "ON" : "OFF"}`,
-                value: stage,
-              };
-            }),
+            ["enabled", "correction", "translation", "enhancement", "audit", "verbose"].map(
+              (stage) => {
+                const cfg = parseConfig(CONFIG_PATH);
+                return {
+                  title: stage,
+                  description: `Currently: ${(cfg as unknown as Record<string, unknown>)[stage] ? "ON" : "OFF"}`,
+                  value: stage,
+                };
+              },
+            ),
           );
         }}
         onBack={goBack}
@@ -227,17 +196,52 @@ const tui: TuiPlugin = async (api) => {
     );
   }
 
-  // ── /better-prompt:config ────────────────────────────────
+  // :::: /better-prompt:config :::: /////////////////////////
 
   function handleConfig() {
-    prevRoute = { name: api.route.current.name, params: (api.route.current as any).params };
+    prevRoute = {
+      name: api.route.current.name,
+      params: (api.route.current as Record<string, unknown>).params as
+        | Record<string, unknown>
+        | undefined,
+    };
     api.route.navigate("better-prompt:config");
   }
 
   function ConfigRoute() {
-    const config = parseConfig(CONFIG_PATH);
-    const options = () =>
-      Object.entries(config).map(([k, v]) => {
+    const [configData, setConfigData] = createSignal(parseConfig(CONFIG_PATH));
+    const [tiersData, setTiersData] = createSignal<{
+      fast: ModelEntry[];
+      capable: ModelEntry[];
+      powerful: ModelEntry[];
+    } | null>(null);
+    const [cycleIndex, setCycleIndex] = createSignal<Record<string, number>>({});
+
+    // Load model tiers asynchronously
+    getModelTiers()
+      .then(setTiersData)
+      .catch(() => {
+        api.ui.toast({ variant: "error", message: "Could not load model tiers" });
+      });
+
+    const refreshConfig = () => {
+      setConfigData(parseConfig(CONFIG_PATH));
+    };
+
+    const options = () => {
+      const config = configData();
+      return Object.entries(config).map(([k, v]) => {
+        const isModel = (MODEL_FIELDS as readonly string[]).includes(k);
+
+        if (isModel) {
+          const display = formatModelDisplay(String(v), tiersData(), k);
+          return {
+            title: k,
+            description: display,
+            value: k,
+          };
+        }
+
         const isBool = typeof v === "boolean";
         return {
           title: k,
@@ -245,36 +249,88 @@ const tui: TuiPlugin = async (api) => {
           value: k,
         };
       });
+    };
+
+    const handleSelect = (opt: SelectOption) => {
+      const key = opt.value as keyof Config;
+      const config = configData();
+      const currentVal = config[key];
+
+      if (typeof currentVal === "boolean") {
+        updateConfig(CONFIG_PATH, { [key]: !currentVal });
+        api.ui.toast({
+          variant: "success",
+          message: `${key}: ${currentVal} -> ${!currentVal}`,
+        });
+        refreshConfig();
+        return;
+      }
+
+      // Model field: cycle tier on Enter
+      if ((MODEL_FIELDS as readonly string[]).includes(key)) {
+        const current = String(currentVal);
+        const resolvedTier = resolveTier(current, tiersData());
+        const currentTierName = resolvedTier || TIER_ALIASES[current] || current;
+
+        const currentIdx = TIER_CYCLE.indexOf(currentTierName);
+        const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % TIER_CYCLE.length : 0;
+        const next = TIER_CYCLE[nextIdx];
+
+        updateConfig(CONFIG_PATH, { [key]: next });
+        setCycleIndex({ ...cycleIndex(), [key]: 0 });
+        api.ui.toast({ variant: "success", message: `${key}: ${next}` });
+        refreshConfig();
+      }
+    };
+
+    const handleAltSelect = (opt: SelectOption) => {
+      const key = opt.value as keyof Config;
+      if (!(MODEL_FIELDS as readonly string[]).includes(key)) return;
+
+      const tierData = tiersData();
+      if (!tierData) {
+        api.ui.toast({
+          variant: "error",
+          message: "Model data not loaded yet",
+        });
+        return;
+      }
+
+      const config = configData();
+      const currentVal = String(config[key]);
+      const resolvedTier = resolveTier(currentVal, tierData) || "fast";
+      const modelsInTier = tierData[resolvedTier as "fast" | "capable" | "powerful"];
+      if (!modelsInTier || modelsInTier.length === 0) {
+        api.ui.toast({
+          variant: "error",
+          message: `No models available for tier: ${resolvedTier}`,
+        });
+        return;
+      }
+
+      const currentIdx = (cycleIndex()[key] || 0) % modelsInTier.length;
+      const picked = modelsInTier[currentIdx];
+      updateConfig(CONFIG_PATH, { [key]: picked.id });
+      setCycleIndex({ ...cycleIndex(), [key]: currentIdx + 1 });
+      api.ui.toast({
+        variant: "success",
+        message: `${key}: ${picked.id} (${resolvedTier})`,
+      });
+      refreshConfig();
+    };
 
     return (
       <SelectView
         title="Better Prompt Configuration"
         options={options}
-        onSelect={(opt) => {
-          const key = opt.value as keyof Config;
-          const currentVal = config[key];
-
-          if (typeof currentVal === "boolean") {
-            updateConfig(CONFIG_PATH, { [key]: !currentVal });
-            api.ui.toast({
-              variant: "success",
-              message: `${key}: ${currentVal} -> ${!currentVal}`,
-            });
-          } else {
-            api.ui.toast({
-              variant: "info",
-              message: `${key} = ${currentVal}  (edit ${CONFIG_PATH} to change)`,
-              duration: 5000,
-            });
-          }
-          goBack();
-        }}
+        onSelect={handleSelect}
+        onAltSelect={handleAltSelect}
         onBack={goBack}
       />
     );
   }
 
-  // ── /better-prompt:audit ─────────────────────────────────
+  // :::: /better-prompt:audit :::: //////////////////////////
 
   function handleAudit() {
     const auditPath = getAuditPath();
@@ -297,7 +353,12 @@ const tui: TuiPlugin = async (api) => {
       return;
     }
 
-    prevRoute = { name: api.route.current.name, params: (api.route.current as any).params };
+    prevRoute = {
+      name: api.route.current.name,
+      params: (api.route.current as Record<string, unknown>).params as
+        | Record<string, unknown>
+        | undefined,
+    };
     api.route.navigate("better-prompt:audit");
   }
 
@@ -335,7 +396,9 @@ const tui: TuiPlugin = async (api) => {
         const mistakes = entry.mistakes?.length ?? 0;
         const parts: string[] = [entry.prompt.substring(0, 60)];
         if (entry.language) parts.push(`lang: ${entry.language}`);
-        if (mistakes > 0) parts.push(`${mistakes} mistake${mistakes > 1 ? "s" : ""}`);
+        if (mistakes > 0) {
+          parts.push(`${mistakes} mistake${mistakes > 1 ? "s" : ""}`);
+        }
         auditOptions.push({
           title: `Entry #${num}`,
           description: parts.join(" | "),
@@ -372,21 +435,32 @@ const tui: TuiPlugin = async (api) => {
             const entry = JSON.parse(line);
             const details: string[] = [`#${num} ${entry.date}`, `Original: "${entry.prompt}"`];
             if (entry.language) details.push(`Language: ${entry.language}`);
-            if (entry.corrected) details.push(`Corrected: "${entry.corrected}"`);
+            if (entry.corrected) {
+              details.push(`Corrected: "${entry.corrected}"`);
+            }
             if (entry.enhanced) details.push(`Enhanced: "${entry.enhanced}"`);
             if (entry.mistakes?.length > 0) {
               details.push(
                 "Mistakes: " +
                   entry.mistakes
-                    .map((m: any) => `[${m.type}] "${m.original}" -> "${m.correction}"`)
+                    .map(
+                      (m: { type: string; original: string; correction: string }) =>
+                        `[${m.type}] "${m.original}" -> "${m.correction}"`,
+                    )
                     .join("; "),
               );
             }
             if (entry.models) {
               const used: string[] = [];
-              if (entry.models.correction) used.push(`correction=${entry.models.correction}`);
-              if (entry.models.translation) used.push(`translation=${entry.models.translation}`);
-              if (entry.models.enhancement) used.push(`enhancement=${entry.models.enhancement}`);
+              if (entry.models.correction) {
+                used.push(`correction=${entry.models.correction}`);
+              }
+              if (entry.models.translation) {
+                used.push(`translation=${entry.models.translation}`);
+              }
+              if (entry.models.enhancement) {
+                used.push(`enhancement=${entry.models.enhancement}`);
+              }
               if (used.length) details.push(`Models: ${used.join(", ")}`);
             }
             api.ui.toast({
@@ -404,7 +478,7 @@ const tui: TuiPlugin = async (api) => {
     );
   }
 
-  // ── Route + Command registration ─────────────────────────
+  // :::: Route + Command registration :::: //////////////////
 
   api.route.register([
     { name: "better-prompt:toggle", render: () => <ToggleRoute /> },
@@ -442,7 +516,7 @@ const tui: TuiPlugin = async (api) => {
   });
 };
 
-// ── Module export ──────────────────────────────────────────
+// :::: Module export :::: ///////////////////////////////////
 
 const plugin: TuiPluginModule & { id: string } = {
   id: "@objctp/opencode-better-prompt",
