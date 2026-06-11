@@ -22,7 +22,7 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/enhance.sh",
             "statusMessage": "Correcting and Enhancing Prompt...",
-            "timeout": 30
+            "timeout": 90
           }
         ]
       }

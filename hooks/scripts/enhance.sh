@@ -277,7 +277,7 @@ enhance::run_summarisation() {
   local summary_json=""
   summary_json=$(printf '%s' "$input_text" | BETTER_PROMPT_CHILD=1 claude -p \
     --no-session-persistence --output-format json \
-    --agent better-prompt:prompt-summarisation --model "$model" 2>&1) || {
+    --agent better-prompt:prompt-summarisation --model "$model" 2>/dev/null) || {
     _warn "Summarisation stage failed: $summary_json"
     _debug "summarisation ($model): failed"
     CONTEXT_SUMMARY=""
@@ -435,7 +435,7 @@ enhance::run_correction() {
   local correction_model="$2"
 
   local correction_result=""
-  correction_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-correction --model "$correction_model" 2>&1) || {
+  correction_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-correction --model "$correction_model" 2>/dev/null) || {
     _warn "Correction stage failed: $correction_result"
     _debug "correction ($correction_model): stage failed"
     correction_result=""
@@ -492,7 +492,7 @@ enhance::run_translation() {
   local translation_model="$2"
 
   local translation_result=""
-  translation_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-translation --model "$translation_model" 2>&1) || {
+  translation_result=$(printf '%s' "$working_prompt" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-translation --model "$translation_model" 2>/dev/null) || {
     _warn "Translation stage failed: $translation_result"
     _debug "translation ($translation_model): stage failed"
     translation_result=""
@@ -530,7 +530,7 @@ enhance::run_enhancement_stage() {
   enhance_input+="$working_prompt"
 
   local enhance_json=""
-  enhance_json=$(printf '%s' "$enhance_input" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>&1) || {
+  enhance_json=$(printf '%s' "$enhance_input" | BETTER_PROMPT_CHILD=1 claude -p --no-session-persistence --output-format json --agent better-prompt:prompt-enhancement --model "$enhancement_model" 2>/dev/null) || {
     _warn "Enhancement stage failed: $enhance_json"
     _debug "enhancement ($enhancement_model): stage failed"
     enhance_json=""
