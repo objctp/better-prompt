@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 
 // :::: Types :::: ////////////////////////////////////////////
@@ -124,16 +125,12 @@ let _catalog: Catalog | null = null;
 export async function loadCatalog(): Promise<Catalog> {
   if (_catalog) return _catalog;
 
-  const fs = await import("node:fs");
-  const famt = fs.promises;
-
   const isStale = (mtime: number): boolean => Date.now() - mtime > CATALOG_STALE_MS;
 
   try {
-    const stat = await famt.stat(CATALOG_CACHE_PATH);
-    if (!isStale(stat.mtimeMs)) {
-      const raw = await famt.readFile(CATALOG_CACHE_PATH, "utf-8");
-      _catalog = JSON.parse(raw) as Catalog;
+    const info = await stat(CATALOG_CACHE_PATH);
+    if (!isStale(info.mtimeMs)) {
+      _catalog = JSON.parse(await readFile(CATALOG_CACHE_PATH, "utf-8")) as Catalog;
       return _catalog;
     }
   } catch {
@@ -144,13 +141,12 @@ export async function loadCatalog(): Promise<Catalog> {
     const res = await fetch("https://models.dev/api.json");
     const data: Catalog = await res.json();
     _catalog = data;
-    await famt.mkdir(join(CATALOG_CACHE_PATH, ".."), { recursive: true });
-    await famt.writeFile(CATALOG_CACHE_PATH, JSON.stringify(data));
+    await mkdir(dirname(CATALOG_CACHE_PATH), { recursive: true });
+    await writeFile(CATALOG_CACHE_PATH, JSON.stringify(data));
     return data;
   } catch {
     try {
-      const raw = await famt.readFile(CATALOG_CACHE_PATH, "utf-8");
-      _catalog = JSON.parse(raw) as Catalog;
+      _catalog = JSON.parse(await readFile(CATALOG_CACHE_PATH, "utf-8")) as Catalog;
       return _catalog;
     } catch {
       return {};

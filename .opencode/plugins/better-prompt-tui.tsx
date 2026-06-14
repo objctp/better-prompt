@@ -1,11 +1,13 @@
 /** @jsxImportSource @opentui/solid */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { useKeyboard } from "@opentui/solid";
-import { createSignal } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 import {
+  CONFIG_DEFAULTS,
   CONFIG_PATH,
   type Config,
   findModelEntry,
@@ -20,7 +22,6 @@ import {
   TIER_ALIASES,
   TIER_CYCLE,
   updateConfig,
-  // deno-lint-ignore no-sloppy-imports
 } from "./better-prompt-models.js";
 
 // :::: Types :::: ///////////////////////////////////////////
@@ -124,9 +125,268 @@ function formatModelDisplay(
   return value;
 }
 
+// :::: Pipeline State (shared with server plugin) :::: //////////
+
+interface StageState {
+  status: "pending" | "active" | "complete" | "skipped" | "error";
+  durationMs: number | null;
+  error?: string;
+}
+
+interface PipelineState {
+  timestamp: string;
+  status: "running" | "modified" | "no_changes" | "error";
+  language: string | null;
+  mistakes: number;
+  stages: {
+    correction: StageState;
+    translation: StageState;
+    context: StageState;
+    enhancement: StageState;
+  };
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+  sessionCost: number;
+  sessionInputTokens: number;
+  sessionOutputTokens: number;
+  preview?: {
+    original: string;
+    processed: string;
+    mistakeDetails: Array<{ type: string; original: string; correction: string }>;
+  };
+}
+
+// :::: Sidebar Panel Component :::: /////////////////////////////////
+
+const POLL_MS = 500;
+
+function SidebarPanel(props: { theme: Record<string, unknown> }) {
+  const [state, setState] = createSignal<PipelineState | null>(null);
+  const [config, setConfig] = createSignal<Config>({ ...CONFIG_DEFAULTS });
+
+  const statePath = join(homedir(), ".local", "state", "opencode", "better-prompt", "state.json");
+  const accent = () => (props.theme.accent as string) || "#A78BFA";
+  const muted = () => (props.theme.textMuted as string) || "#888888";
+  const success = () => (props.theme.success as string) || "#22C55E";
+  const warning = () => (props.theme.warning as string) || "#F59E0B";
+  const info = () => (props.theme.info as string) || "#06B6D4";
+
+  function formatTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  }
+
+  function formatDuration(ms: number | null): string {
+    if (ms === null) return "";
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  createEffect(() => {
+    function load() {
+      try {
+        setConfig(parseConfig(CONFIG_PATH));
+      } catch {
+        // config read may fail if file doesn't exist yet
+      }
+      try {
+        if (!existsSync(statePath)) {
+          setState(null);
+          return;
+        }
+        const raw = readFileSync(statePath, "utf8").trim();
+        if (!raw) {
+          setState(null);
+          return;
+        }
+        setState(JSON.parse(raw) as PipelineState);
+      } catch {
+        // stale read is fine
+      }
+    }
+    load();
+    const timer = setInterval(load, POLL_MS);
+    onCleanup(() => clearInterval(timer));
+  });
+
+  const isVisible = () => {
+    const s = state();
+    return s !== null;
+  };
+
+  const STAGE_DEFS = [
+    { key: "correction" as const, label: "correction", enabled: (c: Config) => c.correction },
+    { key: "translation" as const, label: "translation", enabled: (c: Config) => c.translation },
+    { key: "context" as const, label: "context", enabled: (c: Config) => c.enhancement },
+    { key: "enhancement" as const, label: "enhancement", enabled: (c: Config) => c.enhancement },
+  ];
+
+  function stageSymbol(status: StageState["status"]): { char: string; color: string } {
+    switch (status) {
+      case "active":
+        return { char: "\u25C6", color: info() };
+      case "complete":
+        return { char: "\u25C7", color: success() };
+      case "skipped":
+        return { char: "\u25CB", color: muted() };
+      case "error":
+        return { char: "\u25B2", color: warning() };
+      default:
+        return { char: "\u25CB", color: muted() };
+    }
+  }
+
+  function stageVerb(label: string): string {
+    const map: Record<string, string> = {
+      correction: "correcting",
+      translation: "translating",
+      context: "summarising",
+      enhancement: "enhancing",
+    };
+    return map[label] || `${label}...`;
+  }
+
+  function stageDetail(def: (typeof STAGE_DEFS)[number], ss: StageState, s: PipelineState): string {
+    if (ss.status === "active") {
+      return stageVerb(def.label);
+    }
+    if (ss.status === "complete") {
+      const parts: string[] = ["done"];
+      const dur = formatDuration(ss.durationMs);
+      if (dur) parts.push(dur);
+      if (def.key === "correction" && s.mistakes > 0) {
+        parts.push(`${s.mistakes} mistake${s.mistakes > 1 ? "s" : ""}`);
+      }
+      return parts.join(" \u00B7 ");
+    }
+    if (ss.status === "skipped") {
+      const parts: string[] = ["skipped"];
+      if (def.key === "translation" && s.language === "en") parts.push("(en)");
+      return parts.join(" ");
+    }
+    if (ss.status === "error") {
+      return ss.error || "error";
+    }
+    return "";
+  }
+
+  return (
+    <box width="100%" flexDirection="column" marginBottom={isVisible() ? 1 : 0}>
+      {isVisible() && (
+        <text fg={accent()}>
+          <b>Better Prompt</b>
+        </text>
+      )}
+
+      {isVisible() && (
+        <box width="100%" flexDirection="column" paddingLeft={1}>
+          {(() => {
+            const s = state();
+            if (!s) return [];
+            const c = config();
+            const verbose = c.verbose;
+            const visibleStages = STAGE_DEFS.filter((def) => def.enabled(c));
+            const elements: unknown[] = [];
+
+            for (let i = 0; i < visibleStages.length; i++) {
+              const def = visibleStages[i];
+              const ss = s.stages[def.key];
+              const sym = stageSymbol(ss.status);
+              const isLast = i === visibleStages.length - 1;
+              const connector = isLast ? "  " : "\u2502 ";
+
+              elements.push(
+                <box flexDirection="row">
+                  <text fg={sym.color}>{sym.char}</text>
+                  <text fg={accent()}> {def.label}</text>
+                </box>,
+              );
+
+              const detail = stageDetail(def, ss, s);
+              const showLangBadge =
+                def.key === "correction" && s.language && ss.status !== "pending";
+
+              elements.push(
+                <box flexDirection="row">
+                  <text fg={muted()}>{connector}</text>
+                  {showLangBadge ? (
+                    <>
+                      <text bg="#374151" fg="#E5E7EB">
+                        {" "}
+                        {s.language}{" "}
+                      </text>
+                      <text fg={ss.status === "error" ? warning() : muted()}> {detail}</text>
+                    </>
+                  ) : (
+                    <text fg={ss.status === "error" ? warning() : muted()}> {detail}</text>
+                  )}
+                </box>,
+              );
+
+              if (
+                verbose &&
+                def.key === "correction" &&
+                ss.status === "complete" &&
+                s.preview?.mistakeDetails &&
+                s.preview.mistakeDetails.length > 0
+              ) {
+                for (const m of s.preview.mistakeDetails.slice(0, 5)) {
+                  elements.push(
+                    <box flexDirection="row">
+                      <text fg={muted()}>{connector}</text>
+                      <text fg={muted()}>
+                        {" "}
+                        {m.type}: "{m.original}" → "{m.correction}"
+                      </text>
+                    </box>,
+                  );
+                }
+              }
+
+              if (!isLast) {
+                elements.push(<text fg={muted()}>│</text>);
+              }
+            }
+
+            if (s.inputTokens > 0 || s.outputTokens > 0) {
+              const costParts: string[] = [];
+              if (s.cost > 0) costParts.push(`$${s.cost.toFixed(4)}`);
+              costParts.push(
+                `${formatTokens(s.inputTokens)}\u2192${formatTokens(s.outputTokens)}t`,
+              );
+              elements.push(
+                <box flexDirection="row" marginTop={0}>
+                  <text fg={muted()}> </text>
+                  {s.cost > 0 ? (
+                    <text fg={muted()}> {costParts.join(" \u00B7 ")}</text>
+                  ) : (
+                    <text fg={muted()}> {costParts[0]}</text>
+                  )}
+                  {s.sessionInputTokens > 0 ? (
+                    <text fg={muted()}>
+                      {" "}
+                      (sess: {formatTokens(s.sessionInputTokens)}→
+                      {formatTokens(s.sessionOutputTokens)}t)
+                    </text>
+                  ) : null}
+                </box>,
+              );
+            }
+
+            return elements;
+          })()}
+        </box>
+      )}
+    </box>
+  );
+}
+
 // :::: TUI Plugin :::: //////////////////////////////////////
 
-// deno-lint-ignore require-await
 const tui: TuiPlugin = async (api) => {
   function getAuditPath(): string {
     return join(api.state.path.directory, ".opencode", "better-prompt", "audit.json");
@@ -154,16 +414,27 @@ const tui: TuiPlugin = async (api) => {
   }
 
   function ToggleRoute() {
-    const [stages, setStages] = createSignal(
-      ["enabled", "correction", "translation", "enhancement", "audit", "verbose"].map((stage) => {
-        const config = parseConfig(CONFIG_PATH);
-        return {
-          title: stage,
-          description: `Currently: ${(config as unknown as Record<string, unknown>)[stage] ? "ON" : "OFF"}`,
-          value: stage,
-        };
-      }),
-    );
+    const TOGGLE_KEYS = [
+      "enabled",
+      "correction",
+      "translation",
+      "enhancement",
+      "audit",
+      "verbose",
+    ] as const;
+
+    const buildStages = (): SelectOption[] => {
+      const config = parseConfig(CONFIG_PATH);
+      return TOGGLE_KEYS.map((stage) => ({
+        title: stage,
+        description: `Currently: ${
+          (config as unknown as Record<string, unknown>)[stage] ? "ON" : "OFF"
+        }`,
+        value: stage,
+      }));
+    };
+
+    const [stages, setStages] = createSignal<SelectOption[]>(buildStages());
 
     return (
       <SelectView
@@ -177,19 +448,7 @@ const tui: TuiPlugin = async (api) => {
             variant: "success",
             message: `${opt.value} is now ${newVal ? "ON" : "OFF"}`,
           });
-          // Update displayed state — stay open for more toggles
-          setStages(
-            ["enabled", "correction", "translation", "enhancement", "audit", "verbose"].map(
-              (stage) => {
-                const cfg = parseConfig(CONFIG_PATH);
-                return {
-                  title: stage,
-                  description: `Currently: ${(cfg as unknown as Record<string, unknown>)[stage] ? "ON" : "OFF"}`,
-                  value: stage,
-                };
-              },
-            ),
-          );
+          setStages(buildStages());
         }}
         onBack={goBack}
       />
@@ -221,7 +480,10 @@ const tui: TuiPlugin = async (api) => {
     getModelTiers()
       .then(setTiersData)
       .catch(() => {
-        api.ui.toast({ variant: "error", message: "Could not load model tiers" });
+        api.ui.toast({
+          variant: "error",
+          message: "Could not load model tiers",
+        });
       });
 
     const refreshConfig = () => {
@@ -479,6 +741,19 @@ const tui: TuiPlugin = async (api) => {
   }
 
   // :::: Route + Command registration :::: //////////////////
+
+  api.slots.register({
+    order: 150,
+    slots: {
+      sidebar_content(ctx) {
+        return (
+          <SidebarPanel
+            theme={(ctx.theme as unknown as { current: Record<string, unknown> }).current ?? {}}
+          />
+        );
+      },
+    },
+  });
 
   api.route.register([
     { name: "better-prompt:toggle", render: () => <ToggleRoute /> },
