@@ -12,73 +12,12 @@ function set_up_before_script() {
 }
 
 function set_up() {
-  _CONTEXT_FILE=$(bashunit::temp_file)
   _AUDIT_FILE=$(bashunit::temp_file)
   _SENTINEL_FILE=$(bashunit::temp_file)
 }
 
 function tear_down() {
-  rm -f "$_CONTEXT_FILE" "$_AUDIT_FILE" "$_SENTINEL_FILE"
-}
-
-###
-### enhance::extract_prior_context
-###
-
-function test_should_extract_recent_entries_from_file() {
-  printf '%s\n' "first prompt" "second prompt" "third prompt" >"$_CONTEXT_FILE"
-  local result
-  result=$(enhance::extract_prior_context "$_CONTEXT_FILE" 2)
-  assert_contains '1. "second prompt"' "$result"
-  assert_contains '2. "third prompt"' "$result"
-  assert_not_contains "first prompt" "$result"
-}
-
-function test_should_return_nothing_for_missing_file() {
-  local result
-  result=$(enhance::extract_prior_context "/nonexistent/file" 5)
-  assert_empty "$result"
-}
-
-function test_should_return_nothing_when_count_is_zero() {
-  printf '%s\n' "first prompt" >"$_CONTEXT_FILE"
-  local result
-  result=$(enhance::extract_prior_context "$_CONTEXT_FILE" 0)
-  assert_empty "$result"
-}
-
-###
-### enhance::append_prior_context
-###
-
-function test_should_append_to_file() {
-  printf '%s\n' "first" >"$_CONTEXT_FILE"
-  enhance::append_prior_context "$_CONTEXT_FILE" 5 "second"
-  local result
-  result=$(cat "$_CONTEXT_FILE")
-  assert_contains "first" "$result"
-  assert_contains "second" "$result"
-}
-
-function test_should_trim_to_window_size() {
-  printf '%s\n' "line1" "line2" "line3" >"$_CONTEXT_FILE"
-  enhance::append_prior_context "$_CONTEXT_FILE" 2 "line4"
-  local result
-  result=$(cat "$_CONTEXT_FILE")
-  assert_not_contains "line1" "$result"
-  assert_not_contains "line2" "$result"
-  assert_contains "line3" "$result"
-  assert_contains "line4" "$result"
-}
-
-function test_should_skip_when_text_is_empty() {
-  printf '%s\n' "existing" >"$_CONTEXT_FILE"
-  local before
-  before=$(cat "$_CONTEXT_FILE")
-  enhance::append_prior_context "$_CONTEXT_FILE" 5 ""
-  local after
-  after=$(cat "$_CONTEXT_FILE")
-  assert_equals "$before" "$after"
+  rm -f "$_AUDIT_FILE" "$_SENTINEL_FILE"
 }
 
 ###

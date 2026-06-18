@@ -15,10 +15,11 @@ if [[ "${BETTER_PROMPT_CHILD:-}" == "1" ]]; then
 fi
 export BETTER_PROMPT_CHILD=1
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
-CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
+# Assign only when unset; tests co-source several of these scripts in one shell.
+[[ -v PLUGIN_ROOT ]] || PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+[[ -v CONFIG ]] || CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
 # shellcheck disable=SC2034
-readonly PLUGIN_ROOT CONFIG
+readonly PLUGIN_ROOT CONFIG 2>/dev/null || true
 
 # shellcheck source=lib/common.sh
 source "${PLUGIN_ROOT}/hooks/scripts/lib/common.sh"
@@ -50,12 +51,24 @@ enhance::read_context_state() {
     return 0
   fi
 
-  local parsed stored_session_id current_session_id="${CLAUDE_SESSION_ID:-}"
-  parsed=$(jq -r --arg sid "$current_session_id" \
-    '[.summary // "", .prompt_count // 0, .last_uuid // "", .session_id // ""] | @tsv' \
-    <"$context_file" 2>/dev/null) || parsed=$'\t\t\t\t'
+  local current_session_id="${CLAUDE_SESSION_ID:-}"
+  local stored_session_id=""
+  # Base64 each field before joining so a multi-line summary survives `read`.
+  local parsed
+  parsed=$(jq -r --arg sep $'\x1f' '
+    [.summary // "", (.prompt_count // 0 | tostring), .last_uuid // "", .session_id // ""]
+    | map(@base64) | join($sep)
+  ' <"$context_file" 2>/dev/null) || parsed=""
 
-  IFS=$'\t' read -r CONTEXT_SUMMARY CONTEXT_COUNT CONTEXT_LAST_UUID stored_session_id <<<"$parsed"
+  if [[ -n "$parsed" ]]; then
+    local _b_sum _b_count _b_uuid _b_sid
+    IFS=$'\x1f' read -r _b_sum _b_count _b_uuid _b_sid <<<"$parsed"
+    CONTEXT_SUMMARY=$(printf '%s' "$_b_sum" | _b64decode)
+    CONTEXT_COUNT=$(printf '%s' "$_b_count" | _b64decode)
+    CONTEXT_LAST_UUID=$(printf '%s' "$_b_uuid" | _b64decode)
+    stored_session_id=$(printf '%s' "$_b_sid" | _b64decode)
+    [[ "$CONTEXT_COUNT" =~ ^[0-9]+$ ]] || CONTEXT_COUNT=0
+  fi
 
   # Stale context from a different session — reset to defaults
   if [[ -n "$stored_session_id" ]] && [[ "$stored_session_id" != "$current_session_id" ]]; then
@@ -347,10 +360,11 @@ _accumulate_cost() {
 # Sets PROMPT_RESULT and SESSION_ID_RESULT globals (avoids two subshell+jq invocations).
 _extract_payload_fields() {
   local payload="$1"
-  local parsed
-  parsed=$(jq -r '[.prompt // "", .session_id // ""] | @tsv' <<<"$payload" 2>/dev/null) || parsed=$'\t'
-
-  IFS=$'\t' read -r PROMPT_RESULT SESSION_ID_RESULT <<<"$parsed"
+  # Extract with real newlines preserved. @tsv escapes newlines to literal "\n",
+  # which made re-fired prompts never match the sentinel (hashed over the
+  # agent's real-newline output) and caused an infinite rewind loop.
+  PROMPT_RESULT=$(jq -r '.prompt // ""' <<<"$payload" 2>/dev/null) || PROMPT_RESULT=""
+  SESSION_ID_RESULT=$(jq -r '.session_id // ""' <<<"$payload" 2>/dev/null) || SESSION_ID_RESULT=""
 
   # Fall back to env var if session_id missing from payload
   if [[ -z "$SESSION_ID_RESULT" ]] && [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
@@ -387,6 +401,7 @@ enhance::check_sentinel() {
   local original_prompt="$2"
 
   if [[ ! -f "$sentinel_path" ]]; then
+    _debug "Sentinel absent at $sentinel_path — first fire, or removed"
     return 1
   fi
 
@@ -402,7 +417,7 @@ enhance::check_sentinel() {
       rm -f "$sentinel_path"
       return 0
     else
-      _debug "Sentinel present but hash mismatch — new prompt, proceeding (stored=${stored_hash:-empty}, incoming=${incoming_hash})"
+      _debug "Sentinel mismatch — stored=${stored_hash:-empty} incoming=${incoming_hash} (incoming bytes=${#original_prompt})"
     fi
   else
     _debug "Stale sentinel (${sentinel_age}s old) — removing"
@@ -429,6 +444,74 @@ _strip_agent_wrappers() {
   return 0
 }
 
+# Parse the correction agent's JSON into pipeline state.
+# Fields are base64-encoded before joining so `read` — which stops at the
+# first newline — cannot truncate a multi-line `corrected` value. That is the
+# common case: any prompt with pasted blocks or quoted content is preserved
+# verbatim by the agent, so `corrected` is multi-line whenever the input was.
+# Arguments:
+#   $1 - state_nameref: pipeline state associative array
+#   $2 - inner_result: the agent's raw JSON (code fences already stripped)
+# Sets CORRECTION_CORRECTED global with the corrected text (empty on failure).
+enhance::parse_correction_result() {
+  local -n _pc_st="$1"
+  local inner_result="$2"
+
+  CORRECTION_CORRECTED=""
+  _pc_st[CORRECTIONS_JSON]="[]"
+  _pc_st[MISTAKE_NATURE_JSON]="[]"
+  _pc_st[DETECTED_LANGUAGE]="en"
+
+  [[ -z "$inner_result" ]] && return 0
+
+  local parsed=""
+  parsed=$(jq -r --arg sep $'\x1f' '
+    [.corrected // "", .language // "en",
+     (.mistakes // [] | tostring),
+     ([.mistakes[]?.type] | unique | tostring)]
+    | map(@base64) | join($sep)
+  ' <<<"$inner_result" 2>/dev/null) || parsed=""
+
+  [[ -z "$parsed" ]] && return 0
+
+  local _b_corrected _b_lang _b_mistakes _b_types
+  IFS=$'\x1f' read -r _b_corrected _b_lang _b_mistakes _b_types <<<"$parsed"
+
+  local decoded_lang decoded_mistakes decoded_types
+  decoded_lang=$(printf '%s' "$_b_lang" | _b64decode)
+  decoded_mistakes=$(printf '%s' "$_b_mistakes" | _b64decode)
+  decoded_types=$(printf '%s' "$_b_types" | _b64decode)
+  CORRECTION_CORRECTED=$(printf '%s' "$_b_corrected" | _b64decode)
+
+  [[ -n "$decoded_lang" ]] && _pc_st[DETECTED_LANGUAGE]="$decoded_lang"
+  # Must stay valid JSON arrays — write_audit feeds them to `jq --argjson`.
+  [[ "$decoded_mistakes" =~ ^\[ ]] && _pc_st[CORRECTIONS_JSON]="$decoded_mistakes"
+  [[ "$decoded_types" =~ ^\[ ]] && _pc_st[MISTAKE_NATURE_JSON]="$decoded_types"
+
+  return 0
+}
+
+# Verify a correction is internally consistent: every claimed fix must appear
+# in the corrected text.  A model that lists a fix for text it then dropped has
+# rewritten or extracted a subset rather than applying discrete fixes — the
+# correction should be discarded and the original kept.
+# Arguments:
+#   $1 - corrected text
+#   $2 - corrections_json: JSON array of {original, correction} objects
+# Returns 0 if consistent (or no fixes claimed), 1 otherwise.
+enhance::correction_is_consistent() {
+  local corrected="$1" corrections_json="$2"
+  [[ -z "$corrections_json" || "$corrections_json" == "[]" ]] && return 0
+
+  local fix
+  while IFS= read -r fix; do
+    [[ -z "$fix" ]] && continue
+    grep -qFi -- "$fix" <<<"$corrected" || return 1
+  done < <(jq -r '.[]?.correction // empty' <<<"$corrections_json" 2>/dev/null)
+
+  return 0
+}
+
 enhance::run_correction() {
   local -n _cr_st="$1"
   local working_prompt="${_cr_st[WORKING_PROMPT]}"
@@ -444,32 +527,26 @@ enhance::run_correction() {
   _accumulate_cost _cr_st "$correction_result"
 
   local corrected=""
-  _cr_st[CORRECTIONS_JSON]="[]"
-  _cr_st[MISTAKE_NATURE_JSON]="[]"
-
+  local inner_result=""
   if [[ -n "$correction_result" ]]; then
     # Extract inner result from --output-format json wrapper, then strip fences.
-    local inner_result
     inner_result=$(jq -r '.result // empty' <<<"$correction_result" 2>/dev/null) || inner_result=""
     [[ -z "$inner_result" ]] && inner_result="$correction_result"
     inner_result=$(_strip_agent_wrappers "$inner_result")
+  fi
 
-    # Single jq pass extracts all four fields using unit separator (ASCII 31)
-    # as delimiter — safe for natural language text that never contains \x1f.
-    local parsed
-    parsed=$(jq -r --arg sep $'\x1f' '
-      [.corrected // "", .language // "en",
-       (.mistakes // [] | tostring // "[]"),
-       ([.mistakes[]?.type] | unique | tostring // "[]")
-      ] | join($sep)
-    ' <<<"$inner_result" 2>/dev/null) || parsed=""
+  enhance::parse_correction_result "$1" "$inner_result"
+  corrected="${CORRECTION_CORRECTED:-}"
 
-    if [[ -n "$parsed" ]]; then
-      IFS=$'\x1f' read -r corrected _cr_lang _cr_mistakes _cr_types <<<"$parsed"
-      _cr_st[DETECTED_LANGUAGE]="$_cr_lang"
-      _cr_st[CORRECTIONS_JSON]="$_cr_mistakes"
-      _cr_st[MISTAKE_NATURE_JSON]="$_cr_types"
-    fi
+  # Guard: reject a correction that drops a claimed fix — the model rewrote or
+  # extracted rather than applied discrete fixes.  Keep the original prompt.
+  if [[ -n "$corrected" ]] && ! enhance::correction_is_consistent "$corrected" "${_cr_st[CORRECTIONS_JSON]}"; then
+    _warn "Correction discarded — output dropped a claimed fix; keeping original prompt"
+    _debug "correction ($correction_model): discarded (a claimed fix is absent from the output)"
+    corrected=""
+    CORRECTION_CORRECTED=""
+    _cr_st[CORRECTIONS_JSON]="[]"
+    _cr_st[MISTAKE_NATURE_JSON]="[]"
   fi
 
   [[ -n "$corrected" ]] && _cr_st[WORKING_PROMPT]="$corrected"
@@ -626,7 +703,7 @@ enhance::write_sentinel() {
   final_hash=$(_md5 "$final_prompt")
   if [[ -n "$final_hash" ]]; then
     _atomic_write "$sentinel_path" "$final_hash"
-    _debug "Sentinel written: $sentinel_path (hash=$final_hash)"
+    _debug "Sentinel written: $sentinel_path (hash=$final_hash, bytes=${#final_prompt})"
   else
     _warn "Could not compute prompt hash — sentinel not written; rewind loop guard inactive"
   fi
@@ -874,12 +951,31 @@ enhance::run_pipeline() {
   return 0
 }
 
+# Wrap @mentions and /commands in backticks so they survive the rewind paste as
+# literal text instead of triggering Claude Code's file-mention picker or slash
+# menu (both fire anywhere in the input, not only at the start).  Backticks make
+# the token inert; the model still sees it as inline code.  Only wraps a token at
+# a word boundary (preceded by whitespace or start of line), so emails like
+# user@host, paths like provider/model, URLs, fractions, and already-fenced
+# tokens are left untouched.
+enhance::wrap_input_triggers() {
+  local bt=$'\x60'
+  sed -E \
+    -e "s#(^|[[:space:]])@([A-Za-z0-9_./@-]+)#\1${bt}@\2${bt}#g" \
+    -e "s#(^|[[:space:]])/([A-Za-z0-9_./:-]+)#\1${bt}/\2${bt}#g" \
+    <<<"$1"
+  return 0
+}
+
 enhance::finalize() {
   local -n _fn_st="$1"
   local original_prompt="$2"
   local session_id="$3"
 
   local final_prompt="${_fn_st[ENHANCED_PROMPT]:-${_fn_st[WORKING_PROMPT]}}"
+  # Neutralise @mentions and /commands so the rewind paste does not trigger
+  # Claude Code's file-mention picker or slash menu (both fire mid-text).
+  final_prompt=$(enhance::wrap_input_triggers "$final_prompt")
 
   if [[ "$AUDIT" == "true" ]] && command -v jq &>/dev/null; then
     enhance::write_audit "$AUDIT_LOG" "$original_prompt" "${_fn_st[CORRECTED_PROMPT]}" "$final_prompt" \

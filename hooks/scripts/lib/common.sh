@@ -97,7 +97,7 @@ _truncate_for_display() {
   fi
 
   if [[ "$line_count" -gt 1 ]]; then
-    suffix+=" [+ $((line_count - 1)) lines]"
+    suffix+=" [+$((line_count - 1)) lines]"
   fi
 
   printf '%s%s' "$first_line" "$suffix"
@@ -120,6 +120,25 @@ _atomic_write() {
 # macOS md5 prints only the digest; GNU md5sum appends the filename
 _md5() {
   printf '%s' "$1" | (md5 2>/dev/null || md5sum 2>/dev/null | cut -c1-32)
+  return 0
+}
+
+# Decode base64 from stdin. GNU coreutils and modern macOS use -d; legacy BSD used -D.
+_b64decode() {
+  if [[ -z "${_B64_DECODE_FLAGS:-}" ]]; then
+    if printf '%s' "Zm9v" | base64 -d >/dev/null 2>&1; then
+      _B64_DECODE_FLAGS="-d"
+    elif printf '%s' "Zm9v" | base64 -D >/dev/null 2>&1; then
+      _B64_DECODE_FLAGS="-D"
+    else
+      _B64_DECODE_FLAGS="passthrough"
+    fi
+  fi
+  if [[ "$_B64_DECODE_FLAGS" == "passthrough" ]]; then
+    cat
+  else
+    base64 "$_B64_DECODE_FLAGS"
+  fi
   return 0
 }
 

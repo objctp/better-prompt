@@ -1,4 +1,4 @@
-name: Publish to GitHub Packages
+name: Publish NPM Packages
 
 on:
   release:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
+  publish-github:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,7 +18,30 @@ jobs:
           node-version: 24
           registry-url: https://npm.pkg.github.com
       - run: node build/build.mjs
+      # Remove the repo .npmrc so its @objctp scope mapping doesn't redirect
+      # the publish; setup-node's registry + NODE_AUTH_TOKEN handle auth.
       - run: rm .npmrc
       - run: npm publish ./dist
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Public npm registry (npmjs.org) — the consumer-facing package.
+  # Authenticated with the NPMJS_TOKEN secret (bypass-2FA, @objctp-scoped).
+  publish-npmjs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: node build/build.mjs
+      # Critical: the repo .npmrc scopes @objctp to npm.pkg.github.com, which
+      # would override setup-node and send the publish to the wrong registry.
+      - run: rm .npmrc
+      # --access public: scoped packages publish as restricted/private without it.
+      - run: npm publish ./dist --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}

@@ -273,3 +273,36 @@ function test_should_treat_empty_value_as_valid_not_fallback() {
   result=$(_get_setting "empty_key" "fallback")
   assert_equals "" "$result"
 }
+
+###
+### _b64decode
+###
+
+function test_should_decode_plain_text() {
+  local encoded result
+  encoded=$(printf '%s' "hello" | base64)
+  result=$(printf '%s' "$encoded" | _b64decode)
+  assert_equals "hello" "$result"
+}
+
+function test_should_decode_multiline_text() {
+  local original=$'line1\nline2\nline3'
+  local encoded result
+  encoded=$(printf '%s' "$original" | base64)
+  result=$(printf '%s' "$encoded" | _b64decode)
+  assert_equals "$original" "$result"
+}
+
+function test_should_decode_special_characters() {
+  local original=$'tab\there\nquote: "\nprefix/@src'
+  local encoded result
+  encoded=$(printf '%s' "$original" | base64)
+  result=$(printf '%s' "$encoded" | _b64decode)
+  assert_equals "$original" "$result"
+}
+
+function test_should_be_idempotent_on_empty_input() {
+  local result
+  result=$(printf '' | _b64decode)
+  assert_empty "$result"
+}

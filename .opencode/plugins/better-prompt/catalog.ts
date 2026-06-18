@@ -1,87 +1,18 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
-
-// :::: Types :::: ////////////////////////////////////////////
-
-export interface Config {
-  enabled: boolean;
-  correction: boolean;
-  correction_model: string;
-  translation: boolean;
-  translation_model: string;
-  enhancement: boolean;
-  enhancement_model: string;
-  audit: boolean;
-  verbose: boolean;
-}
-
-export type ModelRef = { providerID: string; modelID: string };
-
-export interface ModelEntry {
-  id: string;
-  providerID: string;
-  modelID: string;
-  tier: "fast" | "capable" | "powerful";
-  context: number;
-  cost: number;
-  toolCall: boolean;
-}
-
-export interface CatalogModel {
-  id: string;
-  name?: string;
-  tool_call?: boolean;
-  limit?: { context?: number; output?: number };
-  cost?: { input?: number; output?: number };
-}
-
-export interface CatalogProvider {
-  id: string;
-  name?: string;
-  env?: string[];
-  models?: Record<string, CatalogModel>;
-}
-
-export type Catalog = Record<string, CatalogProvider>;
-
-interface CatalogCandidate {
-  id: string;
-  context: number;
-  cost: number;
-  toolCall: boolean;
-}
-
-interface OpenCodeConfig {
-  disabled_providers?: string[];
-  enabled_providers?: string[];
-  provider?: Record<string, { models?: Record<string, unknown> }>;
-  [key: string]: unknown;
-}
+import type {
+  Catalog,
+  CatalogCandidate,
+  CatalogModel,
+  ModelEntry,
+  ModelRef,
+  OpenCodeConfig,
+} from "./types";
 
 // :::: Constants :::: ///////////////////////////////////////
-
-export const CONFIG_PATH = join(homedir(), ".config", "opencode", "better-prompt.local.md");
-
-export const CONFIG_DEFAULTS: Config = {
-  enabled: true,
-  correction: true,
-  correction_model: "haiku",
-  translation: false,
-  translation_model: "haiku",
-  enhancement: false,
-  enhancement_model: "sonnet",
-  audit: true,
-  verbose: false,
-};
-
-export const MODEL_FIELDS: ReadonlyArray<keyof Config> = [
-  "correction_model",
-  "translation_model",
-  "enhancement_model",
-] as const;
 
 export const TIER_CYCLE: readonly string[] = ["fast", "capable", "powerful"];
 
@@ -97,30 +28,13 @@ export const MODEL_DEFAULTS: Record<string, string> = {
   enhancement_model: "sonnet",
 };
 
-// :::: Formatting helpers :::: //////////////////////////////
-
-export function formatCost(cost: number): string {
-  if (cost === 0) return "$0/M";
-  if (cost < 0.01) return `$${cost.toFixed(4)}/M`;
-  if (cost < 1) return `$${cost.toFixed(2)}/M`;
-  return `$${cost.toFixed(2)}/M`;
-}
-
-export function formatContext(ctx: number): string {
-  if (ctx >= 1_000_000) {
-    return `${(ctx / 1_000_000).toFixed(ctx % 1_000_000 === 0 ? 0 : 1)}M`;
-  }
-  if (ctx >= 1_000) return `${Math.round(ctx / 1_000)}K`;
-  return String(ctx);
-}
-
-// :::: Model resolution :::: ////////////////////////////////
-
 const CATALOG_CACHE_PATH = join(homedir(), ".cache", "opencode", "models-dev.json");
 
 const CATALOG_STALE_MS = 24 * 60 * 60 * 1000;
 
 let _catalog: Catalog | null = null;
+
+// :::: Catalog loading :::: /////////////////////////////////
 
 export async function loadCatalog(): Promise<Catalog> {
   if (_catalog) return _catalog;
@@ -153,6 +67,8 @@ export async function loadCatalog(): Promise<Catalog> {
     }
   }
 }
+
+// :::: OpenCode config merge :::: //////////////////////////
 
 function deepMerge<T extends Record<string, unknown>>(a: T, b: Partial<T>): T {
   const result = { ...a };
@@ -225,6 +141,8 @@ export async function getConnectedProviders(): Promise<Set<string>> {
   return connected;
 }
 
+// :::: Tier resolution :::: ////////////////////////////////
+
 export async function getModelTiers(): Promise<{
   fast: ModelEntry[];
   capable: ModelEntry[];
@@ -256,10 +174,6 @@ export async function getModelTiers(): Promise<{
     }
   }
 
-  // Partition models into three tiers by cost:
-  //   fast = cheapest third, capable = middle third, powerful = most expensive third
-  // Each tier is sorted by cost (cheapest first).
-  // The first entry in each tier is the "representative" model shown in the UI.
   const withTools = allCandidates.filter((m) => m.toolCall);
   const pool = withTools.length > 0 ? withTools : allCandidates;
   const byCost = [...pool].sort((a, b) => a.cost - b.cost);
@@ -354,70 +268,4 @@ export function findModelEntry(
     if (found) return found;
   }
   return null;
-}
-
-// :::: Config parsing :::: ///////////////////////////////////
-
-export function parseConfig(configPath: string): Config {
-  if (!existsSync(configPath)) return { ...CONFIG_DEFAULTS };
-
-  const raw = readFileSync(configPath, "utf8");
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return { ...CONFIG_DEFAULTS };
-
-  const fm = fmMatch[1];
-  const get = (key: string): string | undefined => {
-    const m = fm.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-    return m ? m[1].trim() : undefined;
-  };
-
-  const bool = (key: string, fallback: boolean): boolean => {
-    const v = get(key);
-    return v !== undefined ? v === "true" : fallback;
-  };
-
-  const str = (key: string, fallback: string): string => {
-    const v = get(key);
-    return v !== undefined ? v : fallback;
-  };
-
-  return {
-    enabled: bool("enabled", CONFIG_DEFAULTS.enabled),
-    correction: bool("correction", CONFIG_DEFAULTS.correction),
-    correction_model: str("correction_model", CONFIG_DEFAULTS.correction_model),
-    translation: bool("translation", CONFIG_DEFAULTS.translation),
-    translation_model: str("translation_model", CONFIG_DEFAULTS.translation_model),
-    enhancement: bool("enhancement", CONFIG_DEFAULTS.enhancement),
-    enhancement_model: str("enhancement_model", CONFIG_DEFAULTS.enhancement_model),
-    audit: bool("audit", CONFIG_DEFAULTS.audit),
-    verbose: bool("verbose", CONFIG_DEFAULTS.verbose),
-  };
-}
-
-export function updateConfig(configPath: string, updates: Partial<Config>): void {
-  let raw = "";
-  if (existsSync(configPath)) {
-    raw = readFileSync(configPath, "utf8");
-  }
-
-  let fm = "";
-  let body = "";
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (fmMatch) {
-    fm = fmMatch[1];
-    body = fmMatch[2];
-  }
-
-  for (const [key, value] of Object.entries(updates)) {
-    if (value === undefined) continue;
-    const line = `${key}: ${value}`;
-    const regex = new RegExp(`^${key}: .+$`, "m");
-    if (regex.test(fm)) {
-      fm = fm.replace(regex, line);
-    } else {
-      fm += `\n${line}`;
-    }
-  }
-
-  writeFileSync(configPath, `---\n${fm}\n---\n${body}`);
 }

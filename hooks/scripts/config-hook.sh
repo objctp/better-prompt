@@ -9,10 +9,11 @@
 #
 set -euo pipefail
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
-CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
+# Assign only when unset; tests co-source several of these scripts in one shell.
+[[ -v PLUGIN_ROOT ]] || PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+[[ -v CONFIG ]] || CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
 # shellcheck disable=SC2034
-readonly PLUGIN_ROOT CONFIG
+readonly PLUGIN_ROOT CONFIG 2>/dev/null || true
 
 # shellcheck source=lib/common.sh
 source "${PLUGIN_ROOT}/hooks/scripts/lib/common.sh"

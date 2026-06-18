@@ -7,6 +7,16 @@
     "lineWidth": 100,
     "lineEnding": "lf"
   },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "jsxQuoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all",
+      "bracketSpacing": true,
+      "bracketSameLine": false
+    }
+  },
   "files": {
     "includes": ["**"]
   }

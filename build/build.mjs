@@ -156,9 +156,11 @@ for (const entry of readdirSync(join(ROOT, "config"))) {
   copyDereferenced(join(ROOT, "config", entry), join(DIST, "config", entry));
 }
 
-// Copy config and docs
+// Copy config and docs.
+// dist/ ships to npm (@objctp/opencode-better-prompt), whose users are on
+// OpenCode — so the dist README is the OpenCode guide, not the repo overview.
 cpSync(join(ROOT, "opencode.json"), join(DIST, "opencode.json"));
-cpSync(join(ROOT, "README.md"), join(DIST, "README.md"));
+cpSync(join(ROOT, "README.opencode.md"), join(DIST, "README.md"));
 cpSync(join(ROOT, "LICENSE"), join(DIST, "LICENSE"));
 
 // Generate npm package.json for dist/ (not a copy of root)
@@ -176,8 +178,9 @@ const distPkg = {
     postinstall:
       "mkdir -p ~/.config/opencode && [ ! -f ~/.config/opencode/better-prompt.local.md ] && cp config/better-prompt.local.md.example ~/.config/opencode/better-prompt.local.md || true",
   },
+  dependencies: rootPkg.dependencies ?? {},
   exports: {
-    "./server": { import: "./plugins/better-prompt.js" },
+    "./server": { import: "./plugins/better-prompt.ts" },
     "./tui": { import: "./plugins/better-prompt-tui.tsx" },
   },
   files: ["agents/", "plugins/", "config/", "opencode.json", "README.md", "LICENSE"],

@@ -6,11 +6,12 @@
 #
 set -euo pipefail
 
-CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
-ACTIVE_SESSIONS_DIR="${BETTER_PROMPT_SESSIONS_DIR:-$HOME/.claude/sessions}"
-RUNTIME_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/better-prompt"
+# Assign only when unset; tests co-source several of these scripts in one shell.
+[[ -v CONFIG ]] || CONFIG="${BETTER_PROMPT_CONFIG:-$HOME/.claude/better-prompt.local.md}"
+[[ -v ACTIVE_SESSIONS_DIR ]] || ACTIVE_SESSIONS_DIR="${BETTER_PROMPT_SESSIONS_DIR:-$HOME/.claude/sessions}"
+[[ -v RUNTIME_DIR ]] || RUNTIME_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/better-prompt"
 # shellcheck disable=SC2034
-readonly CONFIG ACTIVE_SESSIONS_DIR RUNTIME_DIR
+readonly CONFIG ACTIVE_SESSIONS_DIR RUNTIME_DIR 2>/dev/null || true
 
 _DEBUG_PREFIX="[better-prompt-stop]"
 # shellcheck source=lib/common.sh
