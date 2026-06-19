@@ -6,6 +6,10 @@
 
 - Automate changelog via git-cliff
 
+### Fixed
+
+- Sync .claude-plugin/plugin.json version on release
+
 ## [0.8.0] - 2026-06-18
 
 ### Added

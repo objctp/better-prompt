@@ -33,6 +33,15 @@ bump_version() {
     head -n1
 }
 
+# Bump "version" in a JSON manifest (idempotent; jq preserves key order/format).
+# No-op if the file is absent, so the manifest list can name optional files.
+bump_manifest() {
+  local file="$1" version="$2" tmp
+  [ -f "$file" ] || return 0
+  tmp="$(mktemp)"
+  jq --arg v "$version" '.version = $v' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
 # Rewrite the top section. $1 = mode, $2 = explicit version (release only).
 write_section() {
   local mode="$1" version="${2:-}" section
@@ -69,13 +78,14 @@ do_release() {
 
   write_section release "$version"
 
-  # Keep package.json in lockstep; tolerate "already at this version".
-  if [ -f package.json ]; then
-    npm version "$version" --no-git-tag-version >/dev/null 2>&1 || true
-  fi
+  # Keep every version-bearing manifest in lockstep with the release.
+  local manifest
+  for manifest in package.json .claude-plugin/plugin.json; do
+    bump_manifest "$manifest" "$version"
+  done
 
   BP_CHANGELOG_HOOK=1 git commit -m "chore(release): ${version}" \
-    -- "$FILE" package.json >/dev/null
+    -- "$FILE" package.json .claude-plugin/plugin.json >/dev/null
 
   git tag "$version" 2>/dev/null || echo "tag ${version} already exists" >&2
 
