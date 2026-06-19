@@ -18,7 +18,7 @@ On first run, the plugin copies a default config to `~/.config/opencode/better-p
 
 ## Requirements
 
-Just OpenCode with at least one provider connected and a model available. Because OpenCode lets a plugin rewrite a message in place, there's no clipboard or keystroke hack — no `jq`, `pbcopy`, or `ydotool` needed.
+Just OpenCode with at least one provider connected and a model available.
 
 ## Settings
 
@@ -46,7 +46,7 @@ There are three ways to set a stage's model:
 
 - **Built-in aliases** — `haiku`, `sonnet`, `opus`. Work everywhere.
 - **Dynamic aliases** — `fast`, `capable`, `powerful`. OpenCode resolves these from the providers you've connected, picking the cheapest model with tool support in each tier.
-- **Explicit IDs** — a full `provider/model` string, e.g. `opencode-go/deepseek-v4-pro`. OpenCode only.
+- **Explicit IDs** — a full `provider/model` string, e.g. `opencode-go/deepseek-v4-pro`.
 
 When a stage's model matches its default, Better Prompt sends no override and the agent just inherits the model your session is already using.
 
@@ -90,7 +90,7 @@ All three are available as slash commands and from the command palette:
 
 ## How it works
 
-The plugin hooks OpenCode's `chat.message` event. When you send a message, OpenCode hands the parts to the plugin **before** the model sees them. The plugin runs the pipeline and writes the improved text straight back into the message — the model only ever receives the result. No clipboard, no keystroke injection, nothing to rewind.
+The plugin hooks OpenCode's `chat.message` event. When you send a message, OpenCode hands the parts to the plugin **before** the model sees them. The plugin runs the pipeline and writes the improved text straight back into the message — the model only ever receives the result.
 
 The pipeline itself:
 

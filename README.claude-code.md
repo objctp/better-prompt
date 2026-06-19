@@ -119,25 +119,6 @@ The block-and-paste trick is a workaround, so a few things can trip it up:
 - **Permissions** — macOS needs Accessibility access for `osascript`; Linux needs `uinput` access for `ydotool`.
 - **Timing** — the stop hook waits about 1 second before pasting. Very slow or very fast systems may need this tuned.
 
-## Troubleshooting
-
-**Clipboard not working**
-
-- macOS: `pbcopy` is built in.
-- Linux: install `xclip` or `xsel`.
-
-**Rewind not triggering (Linux)**
-
-- Make sure `ydotool` is installed and the `uinput` module is loaded: `lsmod | grep uinput`.
-- Some distros need your user in the `input` group: `sudo usermod -aG input $USER`.
-- Check `/tmp/better-prompt-stop.log`.
-
-**Rewind not triggering (macOS)**
-
-- Confirm the session PID is right: `grep "\"sessionId\":\"<your-session-id>\"" ~/.claude/sessions/*.json`.
-- Make sure the process is still running: `ps -p <pid>`.
-- Check `/tmp/better-prompt-stop.log`, and turn on `verbose` for pipeline detail.
-
 ## Audit log
 
 With `audit` on, each prompt is appended to `<project>/.claude/better-prompt/audit.json` as one JSON object per line:
@@ -169,3 +150,22 @@ With `audit` on, each prompt is appended to `<project>/.claude/better-prompt/aud
 - `corrected` is the text after correction, before enhancement.
 - `enhanced` is the final prompt after every stage.
 - A model field is `null` when its stage was off.
+
+## Troubleshooting
+
+**Clipboard not working**
+
+- macOS: `pbcopy` is built in.
+- Linux: install `xclip` or `xsel`.
+
+**Rewind not triggering (Linux)**
+
+- Make sure `ydotool` is installed and the `uinput` module is loaded: `lsmod | grep uinput`.
+- Some distros need your user in the `input` group: `sudo usermod -aG input $USER`.
+- Check `/tmp/better-prompt-stop.log`.
+
+**Rewind not triggering (macOS)**
+
+- Confirm the session PID is right: `grep "\"sessionId\":\"<your-session-id>\"" ~/.claude/sessions/*.json`.
+- Make sure the process is still running: `ps -p <pid>`.
+- Check `/tmp/better-prompt-stop.log`, and turn on `verbose` for pipeline detail.

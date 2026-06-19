@@ -32,8 +32,9 @@ tag_pattern = "[0-9].*"
 # Map conventional types to the CHANGELOG sections already in use.
 # Order matters: first match wins.
 commit_parsers = [
-  # Release cut commits (made by scripts/changelog.sh release) are bookkeeping.
-  { message = "^chore\\(release\\)", skip = true },
+  # Housekeeping stays out of the user-facing changelog: chore: covers build,
+  # config, templates, and the release-cut commits made by scripts/changelog.sh.
+  { message = "^chore", skip = true },
   # Changelog housekeeping (e.g. backfilling a missed release) shouldn't
   # self-reference in the next version's entries.
   { message = "^docs\\(changelog\\)", skip = true },
