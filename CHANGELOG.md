@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Automate changelog via git-cliff
+
 ## [0.8.0] - 2026-06-18
 
 ### Added

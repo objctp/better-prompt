@@ -31,6 +31,9 @@
   },
   "scripts": {
     "build": "node build/build.mjs",
+    "changelog": "scripts/changelog.sh unreleased",
+    "changelog:preview": "scripts/changelog.sh preview",
+    "release": "scripts/changelog.sh release",
     "prepublishOnly": "npm run build"
   }
 }

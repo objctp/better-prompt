@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# post-commit — regenerate the Unreleased changelog section and fold it into
+# the commit that just finished (so "during commit it adds a line in Unreleased").
+#
+# Guards:
+#   BP_CHANGELOG_HOOK breaks the amend re-entry loop (amend re-runs post-commit).
+#   The content diff skips the amend entirely when CHANGELOG.md is already current.
+set -euo pipefail
+
+[ "${BP_CHANGELOG_HOOK:-}" = "1" ] && exit 0
+export BP_CHANGELOG_HOOK=1
+
+cd "$(git rev-parse --show-toplevel)"
+[ -f cliff.toml ] && [ -f CHANGELOG.md ] || exit 0
+
+old="$(git show HEAD:CHANGELOG.md 2>/dev/null || true)"
+scripts/changelog.sh unreleased || exit 0
+
+if [ "$old" != "$(cat CHANGELOG.md)" ]; then
+  git add CHANGELOG.md
+  git commit --amend --no-edit >/dev/null 2>&1 || true
+fi

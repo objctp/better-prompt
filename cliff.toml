@@ -1,0 +1,49 @@
+# git-cliff configuration — Keep a Changelog style tuned for better-prompt.
+# Docs: https://git-cliff.org/docs/configuration
+#
+# Source of truth = conventional commits (feat / fix / refactor / perf / ...).
+# Section grouping mirrors the existing CHANGELOG.md: Added / Changed / Fixed.
+
+[changelog]
+header = "# Changelog\n"
+# Rendered once per release (newest first). No version => the Unreleased section.
+body = """
+{% if version %}## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}{% else %}## Unreleased{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+
+{% for commit in commits -%}
+- {{ commit.message | split(pat="\n") | first | trim | upper_first }}
+{% endfor -%}
+{% endfor -%}
+"""
+trim = true
+footer = ""
+
+[git]
+# Parse "type(scope): subject" conventional commits.
+conventional_commits = true
+# Keep non-conventional commits (fall through to the catch-all parser below).
+filter_unconventional = false
+split_commits = false
+# Tags are bare semver (0.7.1), no leading "v".
+tag_pattern = "[0-9].*"
+
+# Map conventional types to the CHANGELOG sections already in use.
+# Order matters: first match wins.
+commit_parsers = [
+  # Release cut commits (made by scripts/changelog.sh release) are bookkeeping.
+  { message = "^chore\\(release\\)", skip = true },
+  # Changelog housekeeping (e.g. backfilling a missed release) shouldn't
+  # self-reference in the next version's entries.
+  { message = "^docs\\(changelog\\)", skip = true },
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Changed" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^revert", group = "Changed" },
+  { message = "^docs?", group = "Changed" },
+  { message = "^style", group = "Changed" },
+  # Catch-all: anything else (incl. non-conventional) lands under Changed.
+  { message = ".*", group = "Changed" },
+]
