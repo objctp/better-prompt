@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://npm.pkg.github.com
-      - run: node build/build.mjs
+      - run: node scripts/build.mjs
       # Remove the repo .npmrc so its @objctp scope mapping doesn't redirect
       # the publish; setup-node's registry + NODE_AUTH_TOKEN handle auth.
       - run: rm .npmrc
@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - run: node build/build.mjs
+      - run: node scripts/build.mjs
       # Critical: the repo .npmrc scopes @objctp to npm.pkg.github.com, which
       # would override setup-node and send the publish to the wrong registry.
       - run: rm .npmrc
