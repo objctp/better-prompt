@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an improvement.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: "A short, specific pitch lands best — the problem, and the shape of a solution. It's fine to use AI to tidy the wording, as long as you understand every line you paste; long, essay-style requests slip down the queue."
+  - type: input
+    id: problem
+    attributes:
+      label: What problem are you solving?
+      description: The pain, in one sentence.
+      placeholder: "e.g. I can't tell which stage rewrote my prompt"
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Three sentences — what and where.
+      placeholder: "What would you expect to see, and where?"
+    validations:
+      required: true
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Before submitting
+      options:
+        - label: I understand this report, the details are accurate, and I've searched for existing reports.
+          required: true

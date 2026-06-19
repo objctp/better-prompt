@@ -1,0 +1,70 @@
+name: Bug report
+description: Report something that is broken.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Short, specific reports get help fastest. It's fine to use AI to tidy the wording, as long as you understand every line you paste — long, essay-style reports are hard to act on and slip down the queue."
+  - type: input
+    id: summary
+    attributes:
+      label: One-line summary
+      description: The whole problem in one sentence.
+      placeholder: "e.g. The correction stage strips inline code spans"
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Plugin host
+      options:
+        - Claude Code
+        - OpenCode
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: If known.
+      placeholder: "e.g. 0.8.0"
+    validations:
+      required: false
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered, only what's needed.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: One line each.
+      value: |
+        Expected:
+        Actual:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or config (optional)
+      description: Only what matters.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Before submitting
+      options:
+        - label: I understand this report, the details are accurate, and I've searched for existing reports.
+          required: true
