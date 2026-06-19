@@ -87,7 +87,7 @@ do_release() {
   BP_CHANGELOG_HOOK=1 git commit -m "chore(release): ${version}" \
     -- "$FILE" package.json .claude-plugin/plugin.json >/dev/null
 
-  git tag "$version" 2>/dev/null || echo "tag ${version} already exists" >&2
+  git tag -a "$version" -m "Release ${version}" 2>/dev/null || echo "tag ${version} already exists" >&2
 
   echo "Cut ${version}: ${FILE} updated, committed, and tagged."
   echo "Next: git push --follow-tags, then create the GitHub release"

@@ -66,5 +66,5 @@ body:
     attributes:
       label: Before submitting
       options:
-        - label: I understand this report, the details are accurate, and I've searched for existing reports.
+        - label: I understand this report, the details are accurate, and I've searched for existing issues.
           required: true
