@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## [0.8.0] - 2026-06-18
+
+### Added
+
+- **OpenCode support** — first-class build (`@objctp/opencode-better-prompt`) that rewrites prompts in place: no clipboard, no keystroke injection.
+- Dynamic model discovery — `fast` / `capable` / `powerful` aliases resolved from your connected providers via the models.dev catalogue.
+- Live pipeline sidebar panel, toast notifications, and session cost/token tracking (OpenCode).
+- Conversation summarisation stage for enhancement continuity (replaces the prior sliding window).
+
+### Fixed
+
+- **Multi-line prompts** (Claude Code) — correction and context summary no longer truncate at the first newline; fixes audit-write crashes and an infinite rewind loop.
+- `@mentions` and `/commands` are auto-wrapped so the rewind paste doesn't trigger the file picker or slash menu.
+- Correction consistency guard — discards fixes the model claims but then dropped.
+
+### Changed
+
+- OpenCode plugin modularised into a `better-prompt/` directory; config validated with `zod`.
+- README split into per-CLI guides (`README.claude-code.md`, `README.opencode.md`).
+
 ## [0.7.1] - 2026-06-06
 
 ### Added
