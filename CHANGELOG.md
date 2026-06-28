@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Self-install bundled content on opencode plugin load
+
 ## [0.8.1] - 2026-06-19
 
 ### Added

@@ -1,10 +1,12 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 import type { Event, Part } from "@opencode-ai/sdk";
 import { CONFIG_PATH, parseConfig } from "./better-prompt/config";
 import { runPipeline } from "./better-prompt/pipeline";
 import { SUB_AGENTS } from "./better-prompt/agents";
+import { seedConfigExample, syncContent } from "./better-prompt/setup-content";
 import { clearState, writeAudit, writeState } from "./better-prompt/state";
 import type {
   AuditEntry,
@@ -22,6 +24,26 @@ import type {
 
 export const BetterPromptPlugin: Plugin = async (ctx) => {
   const { client, directory } = ctx;
+
+  // :::: Self-install bundled content (npm plugins only) :::: //////////////
+  // Failures are swallowed — they must never block the chat hook below.
+  // syncContent logs its own diagnostics via the opencode client.
+  try {
+    const packageRoot = resolve(import.meta.dirname, "..");
+    const pkg = JSON.parse(
+      readFileSync(join(packageRoot, "package.json"), "utf8"),
+    );
+    syncContent({
+      packageRoot,
+      version: pkg.version,
+      packageName: pkg.name,
+      client,
+      directory,
+    });
+    seedConfigExample(packageRoot);
+  } catch {
+    // Self-install is best-effort; never block the pipeline.
+  }
 
   const AUDIT_DIR = join(directory, ".opencode", "better-prompt");
   const AUDIT_PATH = join(AUDIT_DIR, "audit.json");
