@@ -31,7 +31,7 @@ Then `git push --follow-tags` and create the GitHub release — that triggers `.
 
 ## Agents and generated outputs
 
-- `agents/*.md` (Claude Code frontmatter) is canonical. `npm run build` generates `.opencode/agents/` and the entire `dist/` package from it — edit the source, rebuild, never the outputs.
+- `agents/*.md` (Claude Code frontmatter) is canonical. `npm run build` generates `opencode/agents/` and the entire `dist/` package from it — edit the source, rebuild, never the outputs.
 - The `model:` field in `agents/*.md` (`haiku`|`sonnet`) only sets the agent's `temperature` in the OpenCode build (haiku→0.1, sonnet→0.3). Generated agents inherit the session model rather than pinning one; users override the actual model per stage via `better-prompt.local.md`.
 - Adding or removing an agent or command? Update `.claude-plugin/plugin.json` too — it's the manifest Claude Code loads.
 

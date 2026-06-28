@@ -13,7 +13,7 @@ import { dirname, join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const DIST = join(ROOT, "dist");
-const OC_AGENTS = join(ROOT, ".opencode", "agents");
+const OC_AGENTS = join(ROOT, "opencode","agents");
 
 // Clean dist
 if (existsSync(DIST)) {
@@ -23,7 +23,7 @@ mkdirSync(DIST, { recursive: true });
 
 // ── Agent generation ──────────────────────────────────────
 // Source of truth: agents/ (Claude Code format).
-// Generates OpenCode-format files into .opencode/agents/ AND dist/agents/.
+// Generates OpenCode-format files into opencode/agents/ AND dist/agents/.
 
 // Model IDs are intentionally omitted from agent frontmatter.
 // OpenCode subagents inherit the session's current model by default.
@@ -85,7 +85,7 @@ function generateAgent(srcPath) {
   return lines.join("\n");
 }
 
-// Generate agents from agents/ → .opencode/agents/ and dist/agents/
+// Generate agents from agents/ → opencode/agents/ and dist/agents/
 if (existsSync(OC_AGENTS)) {
   rmSync(OC_AGENTS, { recursive: true });
 }
@@ -102,7 +102,7 @@ for (const entry of readdirSync(agentsDir)) {
   writeFileSync(join(DIST, "agents", entry), content);
   agentCount++;
 }
-console.log(`Generated ${agentCount} agents → .opencode/agents/ + dist/agents/`);
+console.log(`Generated ${agentCount} agents → opencode/agents/ + dist/agents/`);
 
 // ── File copy helpers ────────────────────────────────────
 
@@ -132,7 +132,7 @@ function copyDereferenced(src, dest) {
 // .opencode/ (project) or ~/.config/opencode/ (global).
 
 // Plugins (TypeScript)
-const pluginsDir = join(ROOT, ".opencode", "plugins");
+const pluginsDir = join(ROOT, "opencode","plugins");
 if (existsSync(pluginsDir) && readdirSync(pluginsDir).length > 0) {
   mkdirSync(join(DIST, "plugins"), { recursive: true });
   for (const entry of readdirSync(pluginsDir)) {
@@ -143,11 +143,11 @@ if (existsSync(pluginsDir) && readdirSync(pluginsDir).length > 0) {
 // ── Command stubs removed ────────────────────────────────
 // Commands are now handled by the TUI plugin via api.keymap.registerLayer().
 // The TUI plugin provides its own slash command registration (slashName),
-// so .opencode/commands/ stubs are no longer needed — they would duplicate
+// so opencode/commands/ stubs are no longer needed — they would duplicate
 // the TUI plugin's registration and conflict with it.
 // Source commands/*.md files are kept for Claude Code compatibility.
 
-const OC_COMMANDS = join(ROOT, ".opencode", "commands");
+const OC_COMMANDS = join(ROOT, "opencode","commands");
 if (existsSync(OC_COMMANDS)) rmSync(OC_COMMANDS, { recursive: true });
 
 // Config (example config copied to ~/.config/opencode/ at runtime)

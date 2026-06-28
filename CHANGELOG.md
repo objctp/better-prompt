@@ -6,6 +6,10 @@
 
 - Self-install bundled content on opencode plugin load
 
+### Changed
+
+- Rename source dir .opencode to opencode
+
 ## [0.8.1] - 2026-06-19
 
 ### Added
