@@ -35,6 +35,32 @@ Then `git push --follow-tags` and create the GitHub release — that triggers `.
 - The `model:` field in `agents/*.md` (`haiku`|`sonnet`) only sets the agent's `temperature` in the OpenCode build (haiku→0.1, sonnet→0.3). Generated agents inherit the session model rather than pinning one; users override the actual model per stage via `better-prompt.local.md`.
 - Adding or removing an agent or command? Update `.claude-plugin/plugin.json` too — it's the manifest Claude Code loads.
 
+## Paths & locations
+
+Where things live at runtime and in the repo — handy when debugging installs/sync.
+
+**Repo source of truth**
+
+| What | Location |
+| --- | --- |
+| Plugin TS source (shipped as-is, no compile step) | `opencode/plugins/better-prompt/` + `better-prompt.ts`, `better-prompt-tui.tsx` |
+| Self-sync logic | `opencode/plugins/better-prompt/setup-content.ts` |
+| Build → published package | `scripts/build.mjs` → `dist/` (`dist/package.json` holds `exports`/`files`) |
+
+**OpenCode runtime**
+
+| What | Path |
+| --- | --- |
+| Installed package (sync reads from here) | `~/.cache/opencode/packages/@objctp/opencode-better-prompt@<spec>/node_modules/@objctp/opencode-better-prompt/` |
+| Sync idempotency state (delete to force re-sync) | `~/.local/state/opencode/better-prompt/sync-state.json` |
+| Runtime/pipeline state (TUI sidebar) — separate file | `~/.local/state/opencode/better-prompt/state.json` |
+| Audit log (project-local) | `<project>/.opencode/better-prompt/audit.json` |
+| User config (seeded from `config/better-prompt.local.md.example`) | `~/.config/opencode/better-prompt.local.md` |
+| Synced agents — project / global | `<project>/.opencode/agents/` · `~/.config/opencode/agents/` |
+| Logs (`service: better-prompt`) | `~/.local/share/opencode/log/opencode.log` |
+
+`sync-state.json` (content sync) and `state.json` (runtime/TUI) are different files — don't confuse them. The package cache can freeze `@latest`/bare on a stale version — delete `~/.cache/opencode/packages/@objctp/opencode-better-prompt@latest` to re-resolve.
+
 ## Tests, lint, format
 
 - Shell tests run on **bashunit** under `tests/{unit,functional,acceptance}`. Assertions, spies, and mocks are documented in `.claude/rules/testing.md`; the `/shell-test-run` skill runs the suite with coverage.

@@ -9,6 +9,7 @@
 ### Changed
 
 - Rename source dir .opencode to opencode
+- Add paths & locations reference
 
 ## [0.8.1] - 2026-06-19
 
